@@ -1,0 +1,11 @@
+services:
+  tensho:
+    build: .
+    env_file: .env
+    ports:
+      - "4747:4747"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data:/app/data
+      - ./.secrets:/app/.secrets:ro
