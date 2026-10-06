@@ -4,12 +4,11 @@ import { z } from "zod";
 if (existsSync(".env")) process.loadEnvFile(".env");
 
 const schema = z.object({
-  TM_API_URL: z.url().transform((url) => url.replace(/\/+$/, "")),
   TM_API_KEY_PATH: z.string().default(".secrets"),
   TM_TOKENS: z
     .string()
     .default(
-      "SOL,JUP,JTO,PYTH,RAY,ORCA,DRIFT,W,RENDER,HNT,GRASS,BONK,WIF,PENGU,POPCAT,TRUMP,ETH@base,AERO@base,MORPHO@base,VIRTUAL@base",
+      "SOL,JUP,JTO,PYTH,RAY,ORCA,DRIFT,W,RENDER,HNT,GRASS,BONK,WIF,PENGU,POPCAT,TRUMP,CBBTC@base,AERO@base,MORPHO@base,ZORA@base",
     )
     .transform((list) =>
       list

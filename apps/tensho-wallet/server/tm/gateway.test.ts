@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { env } from "../env.ts";
-import { deps } from "./client.ts";
+import { deps, TM_API_URL } from "./client.ts";
 import * as gateway from "./gateway.ts";
 
 const USER = "0e7c5a52-3a8b-4d6e-9f10-2b3c4d5e6f70";
@@ -137,7 +136,7 @@ it.each(cases)("$name", async (tc) => {
   expect(fetchMock).toHaveBeenCalledTimes(1);
   const [url, init] = fetchMock.mock.calls[0]!;
   const headers = init!.headers as Record<string, string>;
-  expect(url).toBe(`${env.TM_API_URL}${tc.path}`);
+  expect(url).toBe(`${TM_API_URL}${tc.path}`);
   expect(init!.method).toBe(tc.method);
   expect(headers.Authorization).toBe(tc.authorized ? "Bearer org-token" : undefined);
   expect(headers["TM-On-Behalf-Of"]).toBe(tc.onBehalfOf);

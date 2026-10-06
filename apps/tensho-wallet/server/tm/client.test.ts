@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { env } from "../env.ts";
-import { deps, tmFetch } from "./client.ts";
+import { deps, TM_API_URL, tmFetch } from "./client.ts";
 import { TMError } from "./errors.ts";
 
 const original = { ...deps };
@@ -24,7 +23,7 @@ describe("tmFetch", () => {
   it("prefixes the base URL and sends the org token", async () => {
     await tmFetch("/v1/gateway/balances");
 
-    expect(fetchMock.mock.calls[0]![0]).toBe(`${env.TM_API_URL}/v1/gateway/balances`);
+    expect(fetchMock.mock.calls[0]![0]).toBe(`${TM_API_URL}/v1/gateway/balances`);
     expect(sentHeaders().Authorization).toBe("Bearer org-token");
   });
 
