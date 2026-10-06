@@ -2,7 +2,7 @@ import { createPublicKey, verify } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { env } from "../env.ts";
 import { TMError } from "./errors.ts";
-import { deps } from "./client.ts";
+import { deps, TM_API_URL } from "./client.ts";
 import { readOrgKey, resolveKeyFile } from "./apikey.ts";
 import { mintOrgToken, organizationId, resetTokenCache } from "./token.ts";
 
@@ -38,7 +38,7 @@ describe("mintOrgToken", () => {
 
     expect(token).toBe("tok-1");
     const [url, init] = fetchMock.mock.calls[0]!;
-    expect(url).toBe(`${env.TM_API_URL}/v1/auth/api-key/token`);
+    expect(url).toBe(`${TM_API_URL}/v1/auth/api-key/token`);
     expect(init?.method).toBe("POST");
     const body = JSON.parse(init?.body as string) as { key_id: string; timestamp: number; signature: string };
     expect(body.key_id).toBe("8a4f1e2b-6c3d-4e5f-8a9b-0c1d2e3f4a5b");

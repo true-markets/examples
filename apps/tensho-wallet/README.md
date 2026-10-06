@@ -18,19 +18,15 @@ Tensho uses the True Markets gateway exactly the way any outside client would. I
 
 1. Install dependencies with `npm install`.
 2. Move the API key you downloaded from the developer console into `.secrets/`. Everything in that folder is gitignored and kept out of the Docker image, and Tensho finds the key on its own. To keep it somewhere else, set `TM_API_KEY_PATH` to the file.
-3. Copy `.env.example` to `.env` and set `TM_API_URL`. The wallet signer key is created for you on first start, and your organization id is read from the API key's token, so there is nothing else to set. Optional overrides: `TM_TOKENS` (the tokens offered for trading, comma-separated, `SYMBOL` for Solana or `SYMBOL@base` for Base; the default is 16 Solana and 4 Base tokens) and `PORT` (default `4747`). Tensho keeps its state in `data/` (customers, session secret and the wallet signer key); delete that folder to start over, for example when pointing at a different environment, but only once no wallet it created holds funds.
+That's all the setup. Tensho talks to https://api.truemarkets.co, creates the wallet signer key on first start and reads your organization id from the API key's token. Optional overrides go in a `.env` file: `TM_TOKENS` (the tokens offered for trading, comma-separated, `SYMBOL` for Solana or `SYMBOL@base` for Base; the default is 16 Solana and 4 Base tokens) and `PORT` (default `4747`). Tensho keeps its state in `data/` (customers, session secret and the wallet signer key); delete that folder to start over, but only once no wallet it created holds funds.
 
 ## Run
 
 For development, `npm run dev` starts the server on port 4747 and the web app on http://localhost:5173 with hot reload. The web app proxies `/api` to the server.
 
-For a single command, `docker compose up --build` builds the web app and serves everything on http://localhost:4747. The key stays out of the image; compose mounts `.secrets/` read-only into the container. If True Markets is running on your own machine, set `TM_API_URL=http://host.docker.internal:8181` in `.env` so the container can reach it.
+For a single command, `docker compose up --build` builds the web app and serves everything on http://localhost:4747. The key stays out of the image; compose mounts `.secrets/` read-only into the container.
 
 `npm run build && npm start` does the same without Docker. Customer records are kept in `data/customers.json`, next to a session-signing secret the server generates on first boot.
-
-## Switching to production
-
-Change `TM_API_URL` to the production API address and use an API key from that environment's console. Nothing else in the app knows which environment it talks to.
 
 ## How it works
 
