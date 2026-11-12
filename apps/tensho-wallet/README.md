@@ -11,22 +11,20 @@ Tensho uses the True Markets gateway exactly the way any outside client would. I
 
 ## Requirements
 
-- Node 22 or newer with npm, or Docker.
+- Docker with Compose (recommended), or Node 22 or newer with npm.
 - A True Markets organization with an API key downloaded from the developer console (a JSON file).
 
 ## Setup
 
-1. Install dependencies with `npm install`.
+1. Skip this with Docker. Otherwise install dependencies with `npm install`.
 2. Move the API key you downloaded from the developer console into `.secrets/`. Everything in that folder is gitignored and kept out of the Docker image, and Tensho finds the key on its own. To keep it somewhere else, set `TM_API_KEY_PATH` to the file.
 That's all the setup. Tensho talks to https://api.truemarkets.co, creates the wallet signer key on first start and reads your organization id from the API key's token. Optional overrides go in a `.env` file: `TM_TOKENS` (the tokens offered for trading, comma-separated, `SYMBOL` for Solana or `SYMBOL@base` for Base; the default is 16 Solana and 4 Base tokens) and `PORT` (default `4747`). Tensho keeps its state in `data/` (customers, session secret and the wallet signer key); delete that folder to start over, but only once no wallet it created holds funds.
 
 ## Run
 
-For development, `npm run dev` starts the server on port 4747 and the web app on http://localhost:5173 with hot reload. The web app proxies `/api` to the server.
+With Docker, which gives every machine the same environment: `docker compose up --build` builds the web app and serves everything on http://localhost:4747. The key stays out of the image; compose mounts `.secrets/` read-only and keeps state in `./data`, and the container reports its health.
 
-For a single command, `docker compose up --build` builds the web app and serves everything on http://localhost:4747. The key stays out of the image; compose mounts `.secrets/` read-only into the container.
-
-`npm run build && npm start` does the same without Docker. Customer records are kept in `data/customers.json`, next to a session-signing secret the server generates on first boot.
+Without Docker: `npm run dev` starts the server on port 4747 and the web app on http://localhost:5173 with hot reload, and `npm run build && npm start` does the same on one port. Customer records are kept in `data/customers.json`, next to a session-signing secret the server generates on first boot.
 
 ## How it works
 
