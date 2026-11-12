@@ -8,7 +8,7 @@ Apps built on the True Markets APIs the way a client would build them. Each fold
 | Example | What it shows |
 | --- | --- |
 | [apps/tensho-wallet](apps/tensho-wallet/) | A neobank on the gateway APIs: sign up with embedded wallets, market buy and sell on Solana and Base, sends to external wallets, and activity |
-| [apps/kumi](apps/kumi/) | An advisor app on the gateway APIs: a safekeeping wallet and a trading account per client household, and market trades of SOL that move only the amount needed and send the proceeds straight back |
+| [apps/kumi](apps/kumi/) | A wealth-advisor app on the gateway APIs: each client gets a Solana wallet Kumi holds and a True Markets trading wallet, and market trades of SOL and other top Solana tokens move only the amount needed and send the proceeds straight back |
 
 ## Before you run one
 
