@@ -1,0 +1,21 @@
+FROM node:22-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM node:22-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+COPY --from=build /app/dist ./dist
+COPY server ./server
+COPY shared ./shared
+COPY scripts ./scripts
+VOLUME ["/app/data"]
+EXPOSE 4848
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://localhost:'+(process.env.PORT||4848)+'/api/me').then((r)=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"
+CMD ["npx", "tsx", "server/index.ts"]
