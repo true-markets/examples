@@ -5,7 +5,7 @@ services:
       - path: .env
         required: false
     ports:
-      - "4747:4747"
+      - "${PORT:-4747}:${PORT:-4747}"
     volumes:
       - ./data:/app/data
       - ./.secrets:/app/.secrets:ro

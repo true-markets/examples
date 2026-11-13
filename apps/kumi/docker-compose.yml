@@ -1,0 +1,11 @@
+services:
+  kumi:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "${PORT:-4848}:${PORT:-4848}"
+    volumes:
+      - ./data:/app/data
+      - ./.secrets:/app/.secrets:ro
