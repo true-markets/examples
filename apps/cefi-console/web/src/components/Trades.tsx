@@ -1,23 +1,15 @@
-import {
-  createColumnHelper,
-  flexRender,
-  getCoreRowModel,
-  getFilteredRowModel,
-  getSortedRowModel,
-  useReactTable,
-  type SortingState,
-} from "@tanstack/react-table";
-import { ArrowDown, ArrowUp } from "lucide-react";
+import { eq, useLiveQuery } from "@tanstack/react-db";
+import { createColumnHelper, type ColumnDef, type ColumnFiltersState } from "@tanstack/react-table";
 import { useMemo, useState } from "react";
-import type { FillRow } from "../../../shared/api.ts";
-import { compareNs } from "../../../shared/orders.ts";
 import { useFillHistory } from "../api.ts";
+import { fillsCollection, type FillRecord } from "../db.ts";
 import { dateTime, nsToMs, price, qty, time, usd, when } from "../format.ts";
 import { store, useFills, useMarket, type TapeTrade } from "../store.ts";
+import { DataTable, idOf, type ColMeta } from "../table/DataTable.tsx";
+import type { Facet } from "../table/FilterEditor.tsx";
+import { dbWhere, isActive, type ActiveFilter, type FilterValue } from "../table/filters.ts";
 import { useUi } from "../ui-state.tsx";
 import { Empty, Panel, Segmented, SideText, cx } from "./ui.tsx";
-
-const col = createColumnHelper<FillRow>();
 
 export function Trades() {
   const [tab, setTab] = useState<"fills" | "tape">("fills");
@@ -62,86 +54,130 @@ export function Trades() {
   );
 }
 
+const fcol = createColumnHelper<FillRecord>();
+const fm = (meta: ColMeta) => meta;
+const FILL_MULTI: Record<string, keyof FillRecord> = { symbol: "symbol", side: "side", liquidity: "liquidity" };
+
+// Your fills, from a TanStack DB live query over the fills collection; the column filters and the
+// "this book only" box become its where clause.
 function Fills({ symbol }: { symbol?: string }) {
   useFillHistory();
-  const fills = useFills();
+  const all = useFills();
   const { setSymbol, setFocusOrderId } = useUi();
-  const [sorting, setSorting] = useState<SortingState>([{ id: "time", desc: true }]);
-  const columns = useMemo(
-    () => [
-      col.accessor("timestampNs", { id: "time", header: "Time", cell: (c) => <span className="num text-muted">{time(c.getValue())}</span>, sortingFn: (a, b) => compareNs(a.original.timestampNs, b.original.timestampNs) }),
-      col.accessor("symbol", { header: "Symbol", filterFn: "equalsString" }),
-      col.accessor("side", { header: "Side", cell: (c) => <SideText side={c.getValue()} /> }),
-      col.accessor("price", { header: "Price", cell: (c) => <span className="num">{price(c.getValue())}</span>, sortingFn: (a, b) => Number(a.original.price) - Number(b.original.price), meta: { right: true } }),
-      col.accessor("qty", { header: "Qty", cell: (c) => <span className="num">{qty(c.getValue())}</span>, sortingFn: (a, b) => Number(a.original.qty) - Number(b.original.qty), meta: { right: true } }),
-      col.accessor((f) => Number(f.price) * Number(f.qty), { id: "notional", header: "Notional", cell: (c) => <span className="num text-muted">{usd(c.getValue())}</span>, meta: { right: true } }),
-      col.accessor("liquidity", { header: "Liq", cell: (c) => <span className="text-muted">{c.getValue() ?? "—"}</span> }),
-      col.accessor("feeBps", { header: "Fee bps", cell: (c) => <span className="num text-muted">{c.getValue() ?? "—"}</span>, meta: { right: true } }),
-    ],
+  const [filters, setFilters] = useState<ColumnFiltersState>([]);
+
+  const columns = useMemo<ColumnDef<FillRecord, unknown>[]>(
+    () =>
+      [
+        fcol.accessor("timeMs", {
+          id: "time",
+          header: "Time",
+          size: 104,
+          meta: fm({ label: "Time", filter: { kind: "since", field: "timeMs" } }),
+          cell: (c) => <span className="num text-muted">{time(c.row.original.timestampNs)}</span>,
+        }),
+        fcol.accessor("symbol", { id: "symbol", header: "Symbol", size: 116, meta: fm({ label: "Symbol", filter: { kind: "multi" } }) }),
+        fcol.accessor("side", { id: "side", header: "Side", size: 64, meta: fm({ label: "Side", filter: { kind: "multi" } }), cell: (c) => <SideText side={c.getValue()} /> }),
+        fcol.accessor("priceN", {
+          id: "price",
+          header: "Price",
+          size: 88,
+          meta: fm({ label: "Price", align: "right", filter: { kind: "range", field: "priceN", unit: "$" } }),
+          cell: (c) => <span className="num">{price(c.row.original.price)}</span>,
+        }),
+        fcol.accessor("qtyN", {
+          id: "qty",
+          header: "Qty",
+          size: 76,
+          meta: fm({ label: "Qty", align: "right", filter: { kind: "range", field: "qtyN" } }),
+          cell: (c) => <span className="num">{qty(c.row.original.qty)}</span>,
+        }),
+        fcol.accessor("notionalN", {
+          id: "notional",
+          header: "Notional",
+          size: 92,
+          meta: fm({ label: "Notional", align: "right", filter: { kind: "range", field: "notionalN", unit: "$" } }),
+          cell: (c) => <span className="num text-muted">{usd(c.getValue() as number)}</span>,
+        }),
+        fcol.accessor((f) => f.liquidity ?? "", {
+          id: "liquidity",
+          header: "Liq",
+          size: 72,
+          meta: fm({ label: "Liquidity", filter: { kind: "multi", field: "liquidity" } }),
+          cell: (c) => <span className="text-muted">{c.row.original.liquidity ?? "—"}</span>,
+        }),
+        fcol.accessor("feeBpsN", {
+          id: "feeBps",
+          header: "Fee bps",
+          size: 72,
+          sortUndefined: "last",
+          meta: fm({ label: "Fee bps", align: "right", filter: { kind: "range", field: "feeBpsN" } }),
+          cell: (c) => <span className="num text-muted">{c.row.original.feeBps ?? "—"}</span>,
+        }),
+        fcol.accessor("orderId", {
+          id: "orderId",
+          header: "Order ID",
+          size: 96,
+          meta: fm({ label: "Order ID", hidden: true, filter: { kind: "text" } }),
+          cell: (c) => (
+            <span className="num text-faint" title={c.getValue()}>
+              …{c.getValue().slice(-8)}
+            </span>
+          ),
+        }),
+      ] as ColumnDef<FillRecord, unknown>[],
     [],
   );
-  // Memoized: a new filters array on every render makes TanStack re-filter and auto-reset the
-  // page index, which re-renders, which makes a new array... a render loop.
-  const columnFilters = useMemo(() => (symbol ? [{ id: "symbol", value: symbol }] : []), [symbol]);
-  const table = useReactTable({
-    data: fills,
-    columns,
-    state: { sorting, columnFilters },
-    autoResetPageIndex: false,
-    onSortingChange: setSorting,
-    getRowId: (f) => f.id,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
+
+  const metaById = useMemo(() => Object.fromEntries(columns.map((c) => [idOf(c), (c.meta as ColMeta).filter])), [columns]);
+  const filtersKey = JSON.stringify(filters);
+  const active = useMemo<ActiveFilter[]>(
+    () => filters.flatMap((f) => (metaById[f.id] && isActive(metaById[f.id]!.kind, f.value as FilterValue) ? [{ id: f.id, meta: metaById[f.id]!, value: f.value as FilterValue }] : [])),
+    // filtersKey stands for the filters' contents.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filtersKey, metaById],
+  );
+  const now = active.some((f) => f.meta.kind === "since") ? Math.floor(Date.now() / 10_000) * 10_000 : 0;
+
+  const { data: rows = [] } = useLiveQuery({
+    query: (q) => {
+      const base = q.from({ f: fillsCollection });
+      // where() needs an expression, so with nothing to filter on there is no where at all.
+      if (!symbol && active.length === 0) return base;
+      return base.where(({ f }) => dbWhere(f as never, active, now, [symbol ? eq(f.symbol, symbol) : undefined]));
+    },
   });
-  const rows = table.getRowModel().rows.slice(0, 300);
+
+  // Choices for the multi-select filters, with counts over every fill.
+  const facets = useMemo(() => {
+    const out: Record<string, Facet[]> = {};
+    for (const [colId, field] of Object.entries(FILL_MULTI)) {
+      const n = new Map<string, number>();
+      for (const f of all) n.set(String(f[field as keyof typeof f] ?? ""), (n.get(String(f[field as keyof typeof f] ?? "")) ?? 0) + 1);
+      out[colId] = [...n].map(([value, count]) => ({ value, count })).sort((a, b) => a.value.localeCompare(b.value));
+    }
+    return out;
+  }, [all]);
 
   return (
-    <div className="h-full overflow-auto">
-      <table className="w-full border-separate border-spacing-0 text-xs">
-        <thead className="sticky top-0 bg-panel">
-          {table.getHeaderGroups().map((hg) => (
-            <tr key={hg.id}>
-              {hg.headers.map((h) => {
-                const right = (h.column.columnDef.meta as { right?: boolean } | undefined)?.right;
-                return (
-                  <th
-                    key={h.id}
-                    onClick={h.column.getToggleSortingHandler()}
-                    className={cx("h-7 cursor-pointer border-b border-line px-2 text-[10px] font-semibold tracking-wider text-faint uppercase select-none hover:text-ink", right ? "text-right" : "text-left")}
-                  >
-                    <span className={cx("inline-flex items-center gap-1", right && "flex-row-reverse")}>
-                      {flexRender(h.column.columnDef.header, h.getContext())}
-                      {h.column.getIsSorted() === "asc" && <ArrowUp size={11} />}
-                      {h.column.getIsSorted() === "desc" && <ArrowDown size={11} />}
-                    </span>
-                  </th>
-                );
-              })}
-            </tr>
-          ))}
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr
-              key={r.id}
-              className="cursor-pointer hover:bg-raised"
-              onClick={() => {
-                setSymbol(r.original.symbol);
-                setFocusOrderId(r.original.orderId);
-              }}
-            >
-              {r.getVisibleCells().map((c) => (
-                <td key={c.id} className={cx("h-7 border-b border-line/60 px-2 whitespace-nowrap", (c.column.columnDef.meta as { right?: boolean } | undefined)?.right && "text-right")}>
-                  {flexRender(c.column.columnDef.cell, c.getContext())}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {rows.length === 0 && <Empty>No fills in the last 24 hours.</Empty>}
-    </div>
+    <DataTable<FillRecord>
+      id="fills"
+      data={rows}
+      columns={columns}
+      getRowId={(f) => f.id}
+      defaultSorting={[{ id: "time", desc: true }]}
+      filters={filters}
+      onFiltersChange={setFilters}
+      manualFiltering
+      facets={facets}
+      pageSize={100}
+      total={all.length}
+      onRowClick={(f) => {
+        setSymbol(f.symbol);
+        setFocusOrderId(f.orderId);
+      }}
+      empty={all.length ? "No fills match these filters." : "No fills in the last 24 hours."}
+    />
   );
 }
 

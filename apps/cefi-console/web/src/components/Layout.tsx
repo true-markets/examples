@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
+import { ErrorBoundary } from "./ErrorBoundary.tsx";
 import { cx } from "./ui.tsx";
 
 // Resizable panes. Drag a divider to resize, double-click it to reset; each split remembers its
@@ -40,17 +41,17 @@ export function Workspace({ orders, fills, balances, book, ticket }: Record<"ord
       <Panel id="left" defaultSize="72" minSize="40">
         <Split id="left" orientation="vertical">
           <Panel id="orders" defaultSize="62" minSize={160}>
-            <div className={pane}>{orders}</div>
+            <div className={pane}><ErrorBoundary name="Orders">{orders}</ErrorBoundary></div>
           </Panel>
           <Divider vertical />
           <Panel id="bottom" defaultSize="38" minSize={120}>
             <Split id="bottom" orientation="horizontal">
               <Panel id="fills" defaultSize="50" minSize={240}>
-                <div className={pane}>{fills}</div>
+                <div className={pane}><ErrorBoundary name="Fills and tape">{fills}</ErrorBoundary></div>
               </Panel>
               <Divider />
               <Panel id="balances" defaultSize="50" minSize={240}>
-                <div className={pane}>{balances}</div>
+                <div className={pane}><ErrorBoundary name="Balances">{balances}</ErrorBoundary></div>
               </Panel>
             </Split>
           </Panel>
@@ -60,11 +61,11 @@ export function Workspace({ orders, fills, balances, book, ticket }: Record<"ord
       <Panel id="right" defaultSize="28" minSize={280}>
         <Split id="right" orientation="vertical">
           <Panel id="book" defaultSize="64" minSize={160}>
-            <div className={pane}>{book}</div>
+            <div className={pane}><ErrorBoundary name="Order book">{book}</ErrorBoundary></div>
           </Panel>
           <Divider vertical />
           <Panel id="ticket" defaultSize="36" minSize={120}>
-            <div className={pane}>{ticket}</div>
+            <div className={pane}><ErrorBoundary name="Ticket">{ticket}</ErrorBoundary></div>
           </Panel>
         </Split>
       </Panel>

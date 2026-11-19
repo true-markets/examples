@@ -13,7 +13,7 @@ It runs out of the box against a built-in simulator, so you can see it working b
 | Area | What it shows | What you can do |
 | --- | --- | --- |
 | **Markets** | A tile per instrument: last, best bid/ask, 24h volume, how many of your orders are open there | Click to focus that symbol |
-| **Orders** | Every order from the last 24 hours, updated live from DROPCOPY. Sorted by last update, newest first, so anything just modified, filled or canceled floats up and flashes. Filter by Open / Filled / Canceled, symbol, side, and free-text search on order id, external id or symbol; sort by any column | Modify price/qty, cancel one, cancel a selection, cancel all in the filtered symbol |
+| **Orders** | Every order from the last 24 hours, updated live from DROPCOPY. Sorted by last update, newest first, so anything just modified, filled or canceled floats up and flashes. Quick filters: Open / Filled / Canceled tabs, a multi-select of symbols, and search across order id, external id and symbol. Every column also has its own filter (see **Tables** below) | Modify price/qty, cancel one, cancel a selection, cancel all in the selected symbols |
 | **Book** | L2 depth for the focused symbol, 10/20/50 levels, with **your resting orders marked on their levels**: your size, how many orders, and what share of the level is yours. A footer counts any of your orders priced deeper than shown | Click a level to load its price into the ticket; cancel your orders at a level |
 | **Ticket** | Size in USD (the default) or as a quantity, with a line saying exactly what will be sent. CeFi: limit or market, GTC or IOC, post-only (ALO); a USD market order uses the exchange's `QUOTE_QTY` flag, a USD limit order is converted at the limit price and rounded down. DeFi: a market swap on the asset's DeFi listing, with a quote to confirm first | Place an order (in live mode, CeFi asks for a second click; DeFi asks you to confirm the quote) |
 | **Fills / Tape** | Your fills (REST history plus live DROPCOPY trades), and the public trade tape with your prints highlighted | Click a fill to focus its order |
@@ -53,6 +53,22 @@ Optional settings go in `.env` next to `package.json`:
 | `API_PORT` | `4850` | The server's port; the dev web server proxies `/api` and `/ws` to it |
 
 For day-to-day use, run the production build: `npm run build && npm start`, then open http://localhost:4850. It serves the UI and the API from one port, and React's production mode is several times faster than `npm run dev`, which is for editing the code.
+
+## Tables
+
+Orders, Fills and Balances share one table component (`web/src/table/DataTable.tsx`) on TanStack Table:
+
+- **Filter any column** from the funnel in its header. The filter depends on the column:
+  - **Numbers** (price, quantity, notional, % filled, USD values): a lower bound (`>` or `≥`), an upper bound (`<` or `≤`), or both for a band, e.g. price > $200 and < $210.
+  - **Few distinct values** (symbol, side, type, status, event): multi-select with live counts.
+  - **IDs** (order id, external id): partial, case-insensitive search. `%` and `_` act as wildcards.
+  - **Times:** within the last N minutes.
+
+  Active filters show as chips above the table; click one to edit it, or **Clear all**.
+- **Columns** (top right of each table): tick to show or hide, and move up or down. You can also drag a header to move it, drag its edge to resize, or double-click the edge to reset its width.
+- **Saved per browser:** column visibility, order, widths and sort go to `localStorage` per table. **Reset to default** in the Columns menu puts them back. Filters aren't saved, so a reload never silently hides orders.
+
+Orders and Fills are queried with **TanStack DB** (`web/src/db.ts`). The stream store mirrors each order and fill into a collection once per frame, with numeric copies of the decimal fields (`priceN`, `qtyN`, `filledPct`...) so ranges compare numbers. The table's filters, tab and search become the `where` of a live query (`web/src/table/filters.ts`), so as DROPCOPY updates arrive only the changed orders are re-evaluated. TanStack Table still does sorting, paging, column layout and selection. Balances is small and comes from REST, so TanStack Table filters it directly with the same filter rules.
 
 ## How it works
 
@@ -130,7 +146,9 @@ web/src/
   feed.ts        WebSocket client: subscriptions, reconnect, heartbeat watchdog
   store.ts       live state and the hooks that read it
   api.ts         REST reads and actions (TanStack Query)
-  components/    Orders (TanStack Table), Book, Ticket, Trades, Balances, Header
+  db.ts          TanStack DB collections for orders and fills, mirrored from the store
+  table/         the shared table: filters, column menu, resizing, saved layout
+  components/    Orders, Book, Ticket, Trades, Balances, Header
 ```
 
 ## Tests

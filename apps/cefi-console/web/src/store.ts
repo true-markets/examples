@@ -6,6 +6,7 @@ import { useMemo, useSyncExternalStore } from "react";
 import type { FillRow, OrderRow } from "../../shared/api.ts";
 import { OrderBook } from "../../shared/book.ts";
 import { fromDropcopy, mergeOrder } from "../../shared/orders.ts";
+import { fills, orders, toFillRecord, toOrderRecord } from "./db.ts";
 import type { DropcopyOrder, EbboData, InstrumentData, ServerMessage, TradeData } from "../../shared/wire.ts";
 
 export type Slice = "orders" | "fills" | "market" | "conn";
@@ -46,6 +47,7 @@ class Store {
 
   private versions: Record<Slice, number> = { orders: 0, fills: 0, market: 0, conn: 0 };
   private dirty = new Set<Slice>();
+  private dirtyOrders = new Set<string>();
   private listeners = new Set<() => void>();
   private scheduled = false;
   // Symbols whose books we subscribe to; a snapshot for any other (one you just switched away
@@ -69,6 +71,15 @@ class Store {
     this.scheduled = true;
     const run = () => {
       this.scheduled = false;
+      // Mirror what changed into the DB collections the tables query, one batch per frame.
+      if (this.dirtyOrders.size) {
+        orders.mirror.upsert([...this.dirtyOrders].flatMap((id) => {
+          const o = this.orders.get(id);
+          return o ? [toOrderRecord(o)] : [];
+        }));
+        this.dirtyOrders.clear();
+      }
+      if (this.dirty.has("fills")) fills.mirror.replaceAll(this.fills.map(toFillRecord));
       for (const s of this.dirty) this.versions[s]++;
       this.dirty.clear();
       for (const l of this.listeners) l();
@@ -80,7 +91,10 @@ class Store {
   // ---------- seeding from REST ----------
 
   seedOrders(rows: OrderRow[]): void {
-    for (const row of rows) this.orders.set(row.orderId, mergeOrder(this.orders.get(row.orderId), row));
+    for (const row of rows) {
+      this.orders.set(row.orderId, mergeOrder(this.orders.get(row.orderId), row));
+      this.dirtyOrders.add(row.orderId);
+    }
     this.changed("orders");
   }
 
@@ -148,6 +162,7 @@ class Store {
   private applyOrder(o: DropcopyOrder): void {
     const row = fromDropcopy(o);
     this.orders.set(row.orderId, mergeOrder(this.orders.get(row.orderId), row));
+    this.dirtyOrders.add(row.orderId);
     this.touchedAt.set(row.orderId, Date.now());
     this.changed("orders");
     if (o.event_type === "TRADE" && o.trade_qty && o.trade_price) {
