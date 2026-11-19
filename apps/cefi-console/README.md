@@ -18,7 +18,7 @@ It runs out of the box against a built-in simulator, so you can see it working b
 | **Ticket** | Size in USD (the default) or as a quantity, with a line saying exactly what will be sent. CeFi: limit or market, GTC or IOC, post-only (ALO); a USD market order uses the exchange's `QUOTE_QTY` flag, a USD limit order is converted at the limit price and rounded down. DeFi: a market swap on the asset's DeFi listing, with a quote to confirm first | Place an order (in live mode, CeFi asks for a second click; DeFi asks you to confirm the quote) |
 | **Fills / Tape** | Your fills (REST history plus live DROPCOPY trades), and the public trade tape with your prints highlighted | Click a fill to focus its order |
 | **Balances** | Each asset split between your wallet and CeFi: free in wallet, allocated, CeFi balance, held by orders, tradable. Per wallet listing (per chain) | Allocate wallet funds to CeFi, release them back; watch each move go through its states under **Moves** |
-| **Header** | Connection health (heartbeat-backed), DEMO/UAT/LIVE badge | **Cancel all orders** (the exchange's own cancel-all) |
+| **Header** | Connection health (heartbeat-backed), DEMO/UAT/LIVE badge | A light / dark / system theme switch (saved in this browser), and **Cancel all orders** (the exchange's own cancel-all) |
 
 ## Run it
 

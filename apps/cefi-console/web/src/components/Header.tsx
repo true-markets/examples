@@ -1,9 +1,11 @@
-import { OctagonX, Pause, Play } from "lucide-react";
+import { Monitor, Moon, OctagonX, Pause, Play, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 import { isActionable } from "../../../shared/orders.ts";
 import { useCancelAll, useDemoStrategy, useSession, useSetDemoStrategy } from "../api.ts";
 import { useConn, useOrders } from "../store.ts";
+import { useTheme, type Theme } from "../theme.ts";
 import { ConfirmCancel } from "./ConfirmCancel.tsx";
+import { Logo } from "./Logo.tsx";
 import { Button, cx } from "./ui.tsx";
 
 export function Header() {
@@ -19,7 +21,7 @@ export function Header() {
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-panel px-4">
       <div className="flex items-center gap-2">
-        <div className="grid size-6 place-items-center rounded bg-info text-[11px] font-bold text-white">TM</div>
+        <Logo size={20} className="text-ink" />
         <span className="text-sm font-semibold">CeFi Console</span>
       </div>
       {session && (
@@ -39,6 +41,8 @@ export function Header() {
         </span>
       )}
       <ConnectionDot />
+      {/* Here, well away from "Cancel all orders" on the right. */}
+      <ThemeSwitch />
 
       <div className="ml-auto flex items-center gap-2">
         {demo && strategy.data && (
@@ -83,5 +87,32 @@ function ConnectionDot() {
       {label}
       {conn.message && <span className="max-w-80 truncate text-sell">· {conn.message}</span>}
     </span>
+  );
+}
+
+function ThemeSwitch() {
+  const [theme, setTheme] = useTheme();
+  const options: { value: Theme; label: string; icon: typeof Sun }[] = [
+    { value: "light", label: "Light", icon: Sun },
+    { value: "dark", label: "Dark", icon: Moon },
+    { value: "system", label: "System", icon: Monitor },
+  ];
+  return (
+    <div className="inline-flex rounded border border-line bg-raised p-0.5" role="radiogroup" aria-label="Theme">
+      {options.map(({ value, label, icon: Icon }) => (
+        <button
+          key={value}
+          type="button"
+          role="radio"
+          aria-checked={theme === value}
+          aria-label={`${label} theme`}
+          title={value === "system" ? "Follow the system setting" : `${label} theme`}
+          onClick={() => setTheme(value)}
+          className={cx("grid h-6 w-7 place-items-center rounded-[3px]", theme === value ? "bg-panel text-ink shadow-sm" : "text-muted hover:text-ink")}
+        >
+          <Icon size={13} />
+        </button>
+      ))}
+    </div>
   );
 }
