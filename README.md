@@ -9,6 +9,7 @@ Apps built on the True Markets APIs the way a client would build them. Each fold
 | --- | --- |
 | [apps/tensho-wallet](apps/tensho-wallet/) | A neobank on the gateway APIs: sign up with embedded wallets, market buy and sell on Solana and Base, sends to external wallets, and activity |
 | [apps/kumi](apps/kumi/) | A wealth-advisor app on the gateway APIs: each client gets a Solana wallet Kumi holds and a True Markets trading wallet, and market trades of SOL and other top Solana tokens move only the amount needed and send the proceeds straight back |
+| [apps/cefi-console](apps/cefi-console/) | A monitoring and order-management UI for an automated CeFi strategy: live orders, fills, book and tape over the CeFi WebSocket, with cancel, modify, cancel-by-symbol, cancel-all, and wallet-to-CeFi allocation. Runs against a built-in simulator until you add a key |
 
 ## Before you run one
 

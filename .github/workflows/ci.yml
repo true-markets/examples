@@ -19,6 +19,7 @@ jobs:
         example:
           - apps/tensho-wallet
           - apps/kumi
+          - apps/cefi-console
     defaults:
       run:
         working-directory: ${{ matrix.example }}
