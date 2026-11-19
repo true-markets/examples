@@ -120,7 +120,8 @@ export function DataTable<T>(p: DataTableProps<T>) {
     () =>
       p.columns.map((c) => {
         const meta = metaOf(c);
-        const floor = meta.fixed ? 0 : headerWidth(meta);
+        // Sized to the header as shown ("Liq"), not the longer menu label ("Liquidity").
+        const floor = meta.fixed ? 0 : headerWidth(typeof c.header === "string" ? c.header : meta.label, !!meta.filter);
         return {
           ...c,
           size: Math.max(c.size ?? 110, floor),
@@ -428,8 +429,8 @@ export function DataTable<T>(p: DataTableProps<T>) {
 
 // Room a header needs: its label in the 10px uppercase, letter-spaced header type (about 7.3px a
 // character), the cell padding, the sort arrow, and the filter button if the column has one.
-function headerWidth(meta: ColMeta): number {
-  return Math.ceil(meta.label.length * 7.3 + 16 + 14 + (meta.filter ? 18 : 0));
+function headerWidth(text: string, filterable: boolean): number {
+  return Math.ceil(text.length * 7.3 + 16 + 14 + (filterable ? 18 : 0));
 }
 
 // A row that flashes when its key changes. The animation starts from an effect rather than by
