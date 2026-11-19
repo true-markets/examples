@@ -16,7 +16,7 @@ import type {
 } from "../../shared/api.ts";
 import { isCustodyPending, isCustodySettled, isDefiDone } from "../../shared/api.ts";
 import { usd as usdText } from "./format.ts";
-import { store } from "./store.ts";
+import { isLive, store } from "./store.ts";
 import { toast } from "./toast.ts";
 
 export class HttpError extends Error {
@@ -66,6 +66,34 @@ export function useFillHistory() {
     if (q.data) store.seedFills(q.data);
   }, [q.data]);
   return q;
+}
+
+// Fills that stream in (DROPCOPY) have no liquidity flag or fee; REST does. Shortly after fills
+// arrive, read the newest page of REST fills to replace them, and try again a few times if REST
+// hasn't caught up. One CeFi call per burst of fills, outside the gateway's rate limit.
+export function useFillEnrichment() {
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let tries = 0;
+    const run = async () => {
+      const rows = await call<FillRow[]>("GET", "/api/fills?recent=1").catch(() => undefined);
+      if (rows) store.mergeFills(rows);
+      const waiting = store.fills.some((f) => isLive(f) && Date.now() - Number(f.timestampNs.slice(0, -6)) < 60_000);
+      if (waiting && tries < 3) {
+        tries++;
+        timer = setTimeout(run, 5_000);
+      }
+    };
+    store.onLiveFill = () => {
+      clearTimeout(timer);
+      tries = 0;
+      timer = setTimeout(run, 2_000);
+    };
+    return () => {
+      clearTimeout(timer);
+      store.onLiveFill = () => {};
+    };
+  }, []);
 }
 
 export const useBalances = () =>

@@ -53,6 +53,8 @@ class Store {
   // Symbols whose books we subscribe to; a snapshot for any other (one you just switched away
   // from, still in flight) is ignored. Kept by the feed client.
   depthWanted = new Set<string>();
+  // Called when a fill streams in, so its liquidity and fee can be fetched from REST.
+  onLiveFill: () => void = () => {};
   // Set by the feed client: asks for a fresh DEPTH snapshot after a skipped sequence number.
   onBookGap: (symbol: string) => void = () => {};
 
@@ -98,11 +100,33 @@ class Store {
     this.changed("orders");
   }
 
-  // REST is the record; fills that arrived on the stream after the newest REST fill are kept on top.
+  // The full REST history: it replaces what REST said before. Streamed fills it already has are
+  // dropped; the rest stay until REST catches up.
   seedFills(rows: FillRow[]): void {
-    const newest = rows.reduce((m, f) => (f.timestampNs > m ? f.timestampNs : m), "0");
-    const live = this.fills.filter((f) => f.id.startsWith("live:") && f.timestampNs > newest);
-    this.fills = [...live, ...[...rows].sort((a, b) => (a.timestampNs < b.timestampNs ? 1 : -1))].slice(0, FILL_LIMIT);
+    this.combineFills(rows);
+  }
+
+  // The newest page of REST fills: adds to what is known, and replaces streamed fills it covers.
+  mergeFills(rows: FillRow[]): void {
+    const rest = new Map(this.fills.filter((f) => !isLive(f)).map((f) => [f.id, f]));
+    for (const r of rows) rest.set(r.id, r);
+    this.combineFills([...rest.values()]);
+  }
+
+  // REST fills are the record: they carry the liquidity flag and fee that a streamed (DROPCOPY)
+  // fill lacks. A streamed fill is replaced by its REST version, matched on order, price and size
+  // within 5 s, since the two timestamps differ slightly. Matching is one to one, so two identical
+  // partial fills of one order are each paired with their own REST row.
+  private combineFills(rest: FillRow[]): void {
+    const unclaimed = [...rest];
+    const live = this.fills.filter((f) => {
+      if (!isLive(f)) return false;
+      const i = unclaimed.findIndex((r) => sameFill(f, r));
+      if (i < 0) return true;
+      unclaimed.splice(i, 1);
+      return false;
+    });
+    this.fills = [...live, ...rest].sort((a, b) => (a.timestampNs < b.timestampNs ? 1 : -1)).slice(0, FILL_LIMIT);
     this.changed("fills");
   }
 
@@ -177,6 +201,7 @@ class Store {
       });
       if (this.fills.length > FILL_LIMIT) this.fills.length = FILL_LIMIT;
       this.changed("fills");
+      this.onLiveFill();
     }
   }
 
@@ -221,6 +246,20 @@ class Store {
 }
 
 export const store = new Store();
+
+export function isLive(f: FillRow): boolean {
+  return f.id.startsWith("live:");
+}
+
+function sameFill(live: FillRow, rest: FillRow): boolean {
+  const ms = (ns: string) => (ns.length > 6 ? Number(ns.slice(0, -6)) : 0);
+  return (
+    live.orderId === rest.orderId &&
+    Number(live.price) === Number(rest.price) &&
+    Number(live.qty) === Number(rest.qty) &&
+    Math.abs(ms(live.timestampNs) - ms(rest.timestampNs)) < 5_000
+  );
+}
 
 // ---------- hooks ----------
 

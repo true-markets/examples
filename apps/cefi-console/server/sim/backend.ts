@@ -160,7 +160,7 @@ export class SimBackend implements Backend {
     return { ...row, createdNs: o.createdNs };
   }
 
-  async fills(): Promise<FillRow[]> {
+  async fills(_recent?: boolean): Promise<FillRow[]> {
     return this.exchange.fills.map((f) => ({
       id: `${f.matchId}:${f.order.id}`,
       orderId: f.order.id,

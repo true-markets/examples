@@ -245,9 +245,9 @@ export class LiveBackend implements Backend {
       .filter((o): o is OrderRow => o !== undefined);
   }
 
-  async fills(): Promise<FillRow[]> {
+  async fills(recent = false): Promise<FillRow[]> {
     const symbolOf = await this.symbolMap();
-    const raw = await this.paged<{
+    type RawFill = {
       order_id: string;
       instrument_id: string;
       match_id: string;
@@ -257,7 +257,11 @@ export class LiveBackend implements Backend {
       trade_fee_bps?: string;
       liq_flag?: FillRow["liquidity"];
       timestamp: string;
-    }>("/orders/trade", { timestamp: nowNs() });
+    };
+    // One page, newest first, is enough to pick up fills that just streamed in.
+    const raw = recent
+      ? await this.list<RawFill>("cefi", "/orders/trade", { timestamp: nowNs(), size: PAGE })
+      : await this.paged<RawFill>("/orders/trade", { timestamp: nowNs() });
     return raw.map((t) => ({
       id: `${t.match_id}:${t.order_id}`,
       orderId: t.order_id,

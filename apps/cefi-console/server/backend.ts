@@ -33,7 +33,8 @@ export interface Backend {
   // Orders entered in the last 24 hours plus anything still active.
   orders(): Promise<OrderRow[]>;
   activeOrders(): Promise<OrderRow[]>;
-  fills(): Promise<FillRow[]>;
+  // The last 24 hours, or with recent only the newest page (to fill in fills that streamed in).
+  fills(recent?: boolean): Promise<FillRow[]>;
   placeOrder(input: NewOrderInput): Promise<{ orderId: string }>;
   modifyOrder(orderId: string, input: ModifyOrderInput): Promise<void>;
   cancelOrder(orderId: string): Promise<void>;
