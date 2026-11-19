@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/reac
 import { TriangleAlert, X } from "lucide-react";
 import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
-import { isListed, useInstruments, useSession } from "./api.ts";
+import { isListed, useFillEnrichment, useFillHistory, useInstruments, useSession } from "./api.ts";
 import { Balances } from "./components/Balances.tsx";
 import { Header } from "./components/Header.tsx";
 import { Workspace } from "./components/Layout.tsx";
@@ -23,6 +23,9 @@ function Streams() {
   const qc = useQueryClient();
   const { data: instruments } = useInstruments();
   const { symbol, setSymbol } = useUi();
+  // Fills load here, not only in the Fills panel, so the tape can mark yours on any tab.
+  useFillHistory();
+  useFillEnrichment();
 
   useEffect(() => {
     // After a reconnect, re-read REST so orders that finished while we were away show their final state.

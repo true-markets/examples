@@ -23,8 +23,11 @@
   --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace;
 }
 
+/* Light colours apply when you pick Light, or pick System on a light OS. Dark is the default above.
+   The theme switch in the header sets data-theme on <html>; System removes it. */
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
     --color-bg: #f4f5f7;
     --color-panel: #ffffff;
     --color-raised: #f7f8fa;
@@ -41,6 +44,29 @@
     --color-info: #2f6fd6;
     --color-info-soft: rgb(47 111 214 / 0.1);
   }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-bg: #f4f5f7;
+  --color-panel: #ffffff;
+  --color-raised: #f7f8fa;
+  --color-line: #e3e6ea;
+  --color-ink: #12161c;
+  --color-muted: #5d6673;
+  --color-faint: #8a929e;
+  --color-buy: #14935a;
+  --color-buy-soft: rgb(20 147 90 / 0.1);
+  --color-sell: #d1343a;
+  --color-sell-soft: rgb(209 52 58 / 0.1);
+  --color-accent: #b7791f;
+  --color-accent-soft: rgb(183 121 31 / 0.14);
+  --color-info: #2f6fd6;
+  --color-info-soft: rgb(47 111 214 / 0.1);
+}
+
+:root {
+  color-scheme: dark;
 }
 
 @layer base {
@@ -68,11 +94,6 @@
   :focus-visible {
     outline: 2px solid var(--color-info);
     outline-offset: 1px;
-  }
-
-  input,
-  select {
-    color-scheme: dark light;
   }
 }
 

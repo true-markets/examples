@@ -6,6 +6,7 @@ import { useMemo, useSyncExternalStore } from "react";
 import type { FillRow, OrderRow } from "../../shared/api.ts";
 import { OrderBook } from "../../shared/book.ts";
 import { fromDropcopy, mergeOrder } from "../../shared/orders.ts";
+import { fills, orders, toFillRecord, toOrderRecord } from "./db.ts";
 import type { DropcopyOrder, EbboData, InstrumentData, ServerMessage, TradeData } from "../../shared/wire.ts";
 
 export type Slice = "orders" | "fills" | "market" | "conn";
@@ -46,11 +47,14 @@ class Store {
 
   private versions: Record<Slice, number> = { orders: 0, fills: 0, market: 0, conn: 0 };
   private dirty = new Set<Slice>();
+  private dirtyOrders = new Set<string>();
   private listeners = new Set<() => void>();
   private scheduled = false;
   // Symbols whose books we subscribe to; a snapshot for any other (one you just switched away
   // from, still in flight) is ignored. Kept by the feed client.
   depthWanted = new Set<string>();
+  // Called when a fill streams in, so its liquidity and fee can be fetched from REST.
+  onLiveFill: () => void = () => {};
   // Set by the feed client: asks for a fresh DEPTH snapshot after a skipped sequence number.
   onBookGap: (symbol: string) => void = () => {};
 
@@ -69,6 +73,15 @@ class Store {
     this.scheduled = true;
     const run = () => {
       this.scheduled = false;
+      // Mirror what changed into the DB collections the tables query, one batch per frame.
+      if (this.dirtyOrders.size) {
+        orders.mirror.upsert([...this.dirtyOrders].flatMap((id) => {
+          const o = this.orders.get(id);
+          return o ? [toOrderRecord(o)] : [];
+        }));
+        this.dirtyOrders.clear();
+      }
+      if (this.dirty.has("fills")) fills.mirror.replaceAll(this.fills.map(toFillRecord));
       for (const s of this.dirty) this.versions[s]++;
       this.dirty.clear();
       for (const l of this.listeners) l();
@@ -80,15 +93,40 @@ class Store {
   // ---------- seeding from REST ----------
 
   seedOrders(rows: OrderRow[]): void {
-    for (const row of rows) this.orders.set(row.orderId, mergeOrder(this.orders.get(row.orderId), row));
+    for (const row of rows) {
+      this.orders.set(row.orderId, mergeOrder(this.orders.get(row.orderId), row));
+      this.dirtyOrders.add(row.orderId);
+    }
     this.changed("orders");
   }
 
-  // REST is the record; fills that arrived on the stream after the newest REST fill are kept on top.
+  // The full REST history: it replaces what REST said before. Streamed fills it already has are
+  // dropped; the rest stay until REST catches up.
   seedFills(rows: FillRow[]): void {
-    const newest = rows.reduce((m, f) => (f.timestampNs > m ? f.timestampNs : m), "0");
-    const live = this.fills.filter((f) => f.id.startsWith("live:") && f.timestampNs > newest);
-    this.fills = [...live, ...[...rows].sort((a, b) => (a.timestampNs < b.timestampNs ? 1 : -1))].slice(0, FILL_LIMIT);
+    this.combineFills(rows);
+  }
+
+  // The newest page of REST fills: adds to what is known, and replaces streamed fills it covers.
+  mergeFills(rows: FillRow[]): void {
+    const rest = new Map(this.fills.filter((f) => !isLive(f)).map((f) => [f.id, f]));
+    for (const r of rows) rest.set(r.id, r);
+    this.combineFills([...rest.values()]);
+  }
+
+  // REST fills are the record: they carry the liquidity flag and fee that a streamed (DROPCOPY)
+  // fill lacks. A streamed fill is replaced by its REST version, matched on order, price and size
+  // within 5 s, since the two timestamps differ slightly. Matching is one to one, so two identical
+  // partial fills of one order are each paired with their own REST row.
+  private combineFills(rest: FillRow[]): void {
+    const unclaimed = [...rest];
+    const live = this.fills.filter((f) => {
+      if (!isLive(f)) return false;
+      const i = unclaimed.findIndex((r) => sameFill(f, r));
+      if (i < 0) return true;
+      unclaimed.splice(i, 1);
+      return false;
+    });
+    this.fills = [...live, ...rest].sort((a, b) => (a.timestampNs < b.timestampNs ? 1 : -1)).slice(0, FILL_LIMIT);
     this.changed("fills");
   }
 
@@ -148,6 +186,7 @@ class Store {
   private applyOrder(o: DropcopyOrder): void {
     const row = fromDropcopy(o);
     this.orders.set(row.orderId, mergeOrder(this.orders.get(row.orderId), row));
+    this.dirtyOrders.add(row.orderId);
     this.touchedAt.set(row.orderId, Date.now());
     this.changed("orders");
     if (o.event_type === "TRADE" && o.trade_qty && o.trade_price) {
@@ -162,6 +201,7 @@ class Store {
       });
       if (this.fills.length > FILL_LIMIT) this.fills.length = FILL_LIMIT;
       this.changed("fills");
+      this.onLiveFill();
     }
   }
 
@@ -206,6 +246,20 @@ class Store {
 }
 
 export const store = new Store();
+
+export function isLive(f: FillRow): boolean {
+  return f.id.startsWith("live:");
+}
+
+function sameFill(live: FillRow, rest: FillRow): boolean {
+  const ms = (ns: string) => (ns.length > 6 ? Number(ns.slice(0, -6)) : 0);
+  return (
+    live.orderId === rest.orderId &&
+    Number(live.price) === Number(rest.price) &&
+    Number(live.qty) === Number(rest.qty) &&
+    Math.abs(ms(live.timestampNs) - ms(rest.timestampNs)) < 5_000
+  );
+}
 
 // ---------- hooks ----------
 

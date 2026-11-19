@@ -20,7 +20,7 @@ export function createApp(backend: Backend): Hono {
   app.get("/api/session", async (c) => c.json(await backend.session()));
   app.get("/api/instruments", async (c) => c.json(await backend.instruments()));
   app.get("/api/orders", async (c) => c.json(await backend.orders()));
-  app.get("/api/fills", async (c) => c.json(await backend.fills()));
+  app.get("/api/fills", async (c) => c.json(await backend.fills(c.req.query("recent") === "1")));
 
   app.post("/api/orders", async (c) => {
     const body = await json<Partial<NewOrderInput>>(c);

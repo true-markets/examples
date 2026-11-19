@@ -1,19 +1,29 @@
 import { X } from "lucide-react";
-import { useEffect, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { createContext, useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import type { OrderStatus, Side } from "../../../shared/wire.ts";
 
 export function cx(...parts: (string | false | null | undefined)[]): string {
   return parts.filter(Boolean).join(" ");
 }
 
+// The far right of the nearest panel header, where a table inside can put its own controls
+// (the Columns button) rather than spending a row on them.
+export const PanelHeaderSlot = createContext<HTMLElement | null>(null);
+
 export function Panel({ title, actions, children, className }: { title: ReactNode; actions?: ReactNode; children: ReactNode; className?: string }) {
+  const [slot, setSlot] = useState<HTMLElement | null>(null);
   return (
     <section className={cx("flex min-h-0 flex-col rounded-md border border-line bg-panel", className)}>
       <header className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
         <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted">{title}</h2>
-        <div className="ml-auto flex items-center gap-1.5">{actions}</div>
+        <div className="ml-auto flex items-center gap-1.5">
+          {actions}
+          <span ref={setSlot} className="flex items-center empty:hidden" />
+        </div>
       </header>
-      <div className="min-h-0 flex-1">{children}</div>
+      <div className="min-h-0 flex-1">
+        <PanelHeaderSlot.Provider value={slot}>{children}</PanelHeaderSlot.Provider>
+      </div>
     </section>
   );
 }
