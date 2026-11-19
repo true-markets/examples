@@ -1,14 +1,14 @@
-import { Ban, X } from "lucide-react";
+import { X } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { OrderRow } from "../../../shared/api.ts";
 import { canonical, type BookLevel } from "../../../shared/book.ts";
 import { isActionable, isOpen } from "../../../shared/orders.ts";
-import { useCancelAll, useCancelMany } from "../api.ts";
+import { useCancelMany } from "../api.ts";
 import { decimalsOf, price as fmtPrice, qty as fmtQty, usd } from "../format.ts";
 import { store, useMarket, useOrders } from "../store.ts";
 import { useUi } from "../ui-state.tsx";
 import { ConfirmCancel } from "./ConfirmCancel.tsx";
-import { Button, Empty, Panel, Segmented, cx } from "./ui.tsx";
+import { Empty, Panel, Segmented, cx } from "./ui.tsx";
 
 const DEPTHS = ["10", "20", "50"] as const;
 
@@ -54,8 +54,6 @@ export function OrderBook() {
   const fmtAmount = (v: number) => (unit === "usd" ? usd(v) : fmtQty(v));
   const [confirm, setConfirm] = useState<OrderRow[]>();
   const cancelMany = useCancelMany();
-  const [confirmAll, setConfirmAll] = useState(false);
-  const cancelAll = useCancelAll();
 
   const book = symbol ? store.books.get(symbol) : undefined;
   const { bids, asks } = book?.levels() ?? { bids: [], asks: [] };
@@ -105,8 +103,6 @@ export function OrderBook() {
     }
     return { qty, notional };
   };
-  // Every order in this book you can still cancel, including any priced past the levels shown.
-  const cancellable = useMemo(() => orders.filter((o) => o.symbol === symbol && isActionable(o.status)).length, [orders, symbol]);
   const myBids = resting("BUY");
   const myAsks = resting("SELL");
 
@@ -212,23 +208,18 @@ export function OrderBook() {
             </div>
             <div className="min-h-0 flex-1 basis-0 overflow-y-auto">{shownBids.map((l, i) => row(l, "BUY", bidCum[i]!))}</div>
           </div>
-          <footer className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-line px-3 py-1.5 text-[11px] text-muted">
-            <span className="inline-flex items-center gap-1.5 whitespace-nowrap" title="Your own open orders in this book, by side: quantity, and value at their limit prices">
+          <footer className="flex shrink-0 items-center gap-3 border-t border-line px-3 py-1.5 text-[11px] text-muted">
+            <span className="inline-flex items-center gap-1.5" title="Your own open orders in this book, by side: quantity, and value at their limit prices">
               <span className="inline-block size-2 rounded-sm bg-accent/70" />
               Yours: bids <span className="num text-buy">{fmtQty(myBids.qty)}</span>
               <span className="num text-muted">({usd(myBids.notional)})</span>· asks <span className="num text-sell">{fmtQty(myAsks.qty)}</span>
               <span className="num text-muted">({usd(myAsks.notional)})</span>
             </span>
-            <span className="ml-auto flex shrink-0 items-center gap-3">
-              {deeper > 0 && (
-                <span className="text-accent" title="Your orders priced beyond the levels shown; show more levels to see them">
-                  +{deeper} deeper
-                </span>
-              )}
-              <Button tone="danger" size="xs" disabled={cancellable === 0} onClick={() => setConfirmAll(true)} title={`Cancel every open order you have in ${symbol}`}>
-                <Ban size={12} /> Cancel all{cancellable ? ` (${cancellable})` : ""}
-              </Button>
-            </span>
+            {deeper > 0 && (
+              <span className="ml-auto text-accent" title="Your orders priced beyond the levels shown; show more levels to see them">
+                +{deeper} deeper
+              </span>
+            )}
           </footer>
         </div>
       )}
@@ -239,15 +230,6 @@ export function OrderBook() {
           pending={cancelMany.isPending}
           onClose={() => setConfirm(undefined)}
           onConfirm={() => cancelMany.mutate(confirm.map((o) => o.orderId), { onSettled: () => setConfirm(undefined) })}
-        />
-      )}
-      {confirmAll && symbol && (
-        <ConfirmCancel
-          title={`Cancel all ${symbol}?`}
-          body={`Sends a cancel for each of your ${cancellable} open ${symbol} order${cancellable === 1 ? "" : "s"}, a few at a time, including any priced past the levels shown. Orders can still fill while their cancel is in flight.`}
-          pending={cancelAll.isPending}
-          onClose={() => setConfirmAll(false)}
-          onConfirm={() => cancelAll.mutate(symbol, { onSettled: () => setConfirmAll(false) })}
         />
       )}
     </Panel>
