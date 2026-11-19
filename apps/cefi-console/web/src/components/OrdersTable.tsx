@@ -3,7 +3,7 @@ import { createColumnHelper, type ColumnDef, type ColumnFiltersState, type RowSe
 import { Ban, ChevronDown, Pencil, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { isActionable, isOpen } from "../../../shared/orders.ts";
-import { useCancelAll, useCancelMany, useCancelOrder, useOrderHistory } from "../api.ts";
+import { useCancelMany, useCancelOrder, useOrderHistory } from "../api.ts";
 import { ordersCollection, toOrderRecord, type OrderRecord } from "../db.ts";
 import { price, qty, shortId, time } from "../format.ts";
 import { store, useOrders } from "../store.ts";
@@ -42,14 +42,13 @@ export function OrdersTable() {
   const { symbol: selectedSymbol, setSymbol, setFocusOrderId, focusOrderId } = useUi();
   const { mutate: cancelOrder } = useCancelOrder();
   const cancelMany = useCancelMany();
-  const cancelAll = useCancelAll();
 
   const [view, setView] = useState<View>("open");
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState<ColumnFiltersState>([]);
   const [selection, setSelection] = useState<RowSelectionState>({});
   const [modifying, setModifying] = useState<OrderRecord>();
-  const [confirm, setConfirm] = useState<{ kind: "symbols"; symbols: string[]; count: number } | { kind: "selected"; ids: string[] }>();
+  const [confirm, setConfirm] = useState<string[]>();
   const [symbolMenu, setSymbolMenu] = useState<HTMLElement>();
 
   const columns = useMemo<ColumnDef<OrderRecord, unknown>[]>(
@@ -288,7 +287,6 @@ export function OrdersTable() {
   const selectedIds = Object.keys(selection).filter((id) => selection[id]);
   const symbolFilter = (filters.find((f) => f.id === "symbol")?.value as string[] | undefined) ?? [];
   const setSymbolFilter = (v: string[] | undefined) => setFilters((fs) => [...fs.filter((f) => f.id !== "symbol"), ...(v?.length ? [{ id: "symbol", value: v }] : [])]);
-  const openInSymbols = symbolFilter.length ? all.filter((o) => symbolFilter.includes(o.symbol) && isActionable(o.status)).length : 0;
 
   return (
     <Panel
@@ -300,18 +298,11 @@ export function OrdersTable() {
         </span>
       }
       actions={
-        <>
-          {selectedIds.length > 0 && (
-            <Button tone="danger" onClick={() => setConfirm({ kind: "selected", ids: selectedIds })}>
-              <Ban size={13} /> Cancel {selectedIds.length} selected
-            </Button>
-          )}
-          {symbolFilter.length > 0 && (
-            <Button tone="danger" disabled={openInSymbols === 0} onClick={() => setConfirm({ kind: "symbols", symbols: symbolFilter, count: openInSymbols })}>
-              <Ban size={13} /> Cancel all {symbolFilter.length === 1 ? symbolFilter[0] : `in ${symbolFilter.length} symbols`}
-            </Button>
-          )}
-        </>
+        selectedIds.length > 0 && (
+          <Button tone="danger" onClick={() => setConfirm(selectedIds)}>
+            <Ban size={13} /> Cancel {selectedIds.length} selected
+          </Button>
+        )
       }
     >
       <DataTable<OrderRecord>
@@ -380,27 +371,11 @@ export function OrdersTable() {
       {modifying && <ModifyDialog order={modifying} onClose={() => setModifying(undefined)} />}
       {confirm && (
         <ConfirmCancel
-          title={
-            confirm.kind === "symbols"
-              ? `Cancel all ${confirm.symbols.length === 1 ? confirm.symbols[0] : `orders in ${confirm.symbols.length} symbols`}?`
-              : `Cancel ${confirm.ids.length} selected orders?`
-          }
-          body={
-            confirm.kind === "symbols"
-              ? `This sends a cancel for each of your ${confirm.count} open orders in ${confirm.symbols.join(", ")}, a few at a time. Orders can still fill while their cancel is in flight.`
-              : "This sends a cancel for each selected order. Orders can still fill while their cancel is in flight."
-          }
-          pending={cancelAll.isPending || cancelMany.isPending}
+          title={`Cancel ${confirm.length} selected order${confirm.length === 1 ? "" : "s"}?`}
+          body="This sends a cancel for each selected order. Orders can still fill while their cancel is in flight."
+          pending={cancelMany.isPending}
           onClose={() => setConfirm(undefined)}
-          onConfirm={async () => {
-            if (confirm.kind === "symbols") {
-              // One symbol at a time: each is its own round of cancels on the server.
-              for (const s of confirm.symbols) await cancelAll.mutateAsync(s).catch(() => undefined);
-              setConfirm(undefined);
-            } else {
-              cancelMany.mutate(confirm.ids, { onSettled: () => setConfirm(undefined), onSuccess: () => setSelection({}) });
-            }
-          }}
+          onConfirm={() => cancelMany.mutate(confirm, { onSettled: () => setConfirm(undefined), onSuccess: () => setSelection({}) })}
         />
       )}
     </Panel>
