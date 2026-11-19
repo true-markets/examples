@@ -6,6 +6,7 @@ import { isListed, useInstruments } from "../api.ts";
 import { compact, price, usd } from "../format.ts";
 import { store, useMarket, useOrders } from "../store.ts";
 import { useUi } from "../ui-state.tsx";
+import { QuoteTrack } from "./QuoteTrack.tsx";
 import { cx, selectClass } from "./ui.tsx";
 
 const COLLAPSED_KEY = "cefi-console:markets-collapsed";
@@ -34,7 +35,7 @@ export function Markets() {
         {collapsed ? (
           <Summary shown={shown} symbol={symbol} setSymbol={setSymbol} open={open} />
         ) : (
-          <Tiles shown={shown} symbol={symbol} setSymbol={setSymbol} openBySymbol={open.bySymbol} />
+          <Tiles shown={shown} symbol={symbol} setSymbol={setSymbol} openBySymbol={open.bySymbol} ordersBySymbol={open.orders} />
         )}
       </div>
       <button
@@ -53,6 +54,8 @@ export function Markets() {
 
 interface OpenSummary {
   bySymbol: Map<string, number>;
+  // The open orders themselves, by book.
+  orders: Map<string, OrderRow[]>;
   count: number;
   bidUsd: number;
   askUsd: number;
@@ -60,11 +63,12 @@ interface OpenSummary {
 
 // Your open orders: how many per book, and what rests on each side at the orders' own prices.
 function summarize(orders: OrderRow[]): OpenSummary {
-  const s: OpenSummary = { bySymbol: new Map(), count: 0, bidUsd: 0, askUsd: 0 };
+  const s: OpenSummary = { bySymbol: new Map(), orders: new Map(), count: 0, bidUsd: 0, askUsd: 0 };
   for (const o of orders) {
     if (!isOpen(o.status)) continue;
     s.count++;
     s.bySymbol.set(o.symbol, (s.bySymbol.get(o.symbol) ?? 0) + 1);
+    s.orders.set(o.symbol, [...(s.orders.get(o.symbol) ?? []), o]);
     const notional = Number(o.leavesQty) * Number(o.price ?? 0);
     if (o.side === "BUY") s.bidUsd += notional;
     else s.askUsd += notional;
@@ -72,7 +76,19 @@ function summarize(orders: OrderRow[]): OpenSummary {
   return s;
 }
 
-function Tiles({ shown, symbol, setSymbol, openBySymbol }: { shown: Instrument[]; symbol?: string; setSymbol: (s: string) => void; openBySymbol: Map<string, number> }) {
+function Tiles({
+  shown,
+  symbol,
+  setSymbol,
+  openBySymbol,
+  ordersBySymbol,
+}: {
+  shown: Instrument[];
+  symbol?: string;
+  setSymbol: (s: string) => void;
+  openBySymbol: Map<string, number>;
+  ordersBySymbol: Map<string, OrderRow[]>;
+}) {
   const columns = Math.max(1, Math.ceil(shown.length / 2));
   return (
     <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
@@ -101,17 +117,15 @@ function Tiles({ shown, symbol, setSymbol, openBySymbol }: { shown: Instrument[]
               <span className="num text-[13px] font-medium">{price(e?.info.last_trade?.price ?? i.referencePrice)}</span>
               <span className="truncate text-[10px] text-faint">vol {compact(live?.stats?.last_24hr_notional ?? i.notional24h)}</span>
             </div>
-            <div className="num flex gap-1.5 truncate text-[11px]">
-              <span className="text-buy">{price(e?.info.best_bid?.price)}</span>
-              <span className="text-faint">/</span>
-              <span className="text-sell">{price(e?.info.best_ask?.price)}</span>
-            </div>
+            <QuoteTrack bid={e?.info.best_bid?.price} ask={e?.info.best_ask?.price} orders={ordersBySymbol.get(i.symbol) ?? NONE} />
           </button>
         );
       })}
     </div>
   );
 }
+
+const NONE: OrderRow[] = [];
 
 function Summary({ shown, symbol, setSymbol, open }: { shown: Instrument[]; symbol?: string; setSymbol: (s: string) => void; open: OpenSummary }) {
   const e = symbol ? store.ebbo.get(symbol) : undefined;
