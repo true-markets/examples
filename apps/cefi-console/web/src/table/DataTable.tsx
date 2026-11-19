@@ -15,8 +15,9 @@ import {
   type Updater,
 } from "@tanstack/react-table";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Columns3, Filter, RotateCcw, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
-import { Button, Empty, cx } from "../components/ui.tsx";
+import { useContext, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { Button, Empty, PanelHeaderSlot, cx } from "../components/ui.tsx";
 import { FilterEditor, type Facet } from "./FilterEditor.tsx";
 import { describe, filterFnFor, isActive, type FilterMeta, type FilterValue } from "./filters.ts";
 import { Popover } from "./Popover.tsx";
@@ -113,9 +114,20 @@ export function DataTable<T>(p: DataTableProps<T>) {
   // Back to the first page whenever the filters change.
   useEffect(() => setPagination((s) => ({ ...s, pageIndex: 0 })), [p.filters]);
 
-  // Tables filtered here (not by DB) use the shared filter rules for each column's kind.
+  // Tables filtered here (not by DB) use the shared filter rules for each column's kind. Every
+  // column is also at least wide enough for its header, so labels never truncate.
   const columns = useMemo(
-    () => p.columns.map((c) => (metaOf(c).filter && !p.manualFiltering ? { ...c, filterFn: filterFnFor<T>(metaOf(c).filter!) } : c)),
+    () =>
+      p.columns.map((c) => {
+        const meta = metaOf(c);
+        const floor = meta.fixed ? 0 : headerWidth(meta);
+        return {
+          ...c,
+          size: Math.max(c.size ?? 110, floor),
+          minSize: Math.max(c.minSize ?? 44, floor),
+          ...(meta.filter && !p.manualFiltering ? { filterFn: filterFnFor<T>(meta.filter) } : {}),
+        };
+      }),
     [p.columns, p.manualFiltering],
   );
 
@@ -174,18 +186,26 @@ export function DataTable<T>(p: DataTableProps<T>) {
   const rows = table.getRowModel().rows;
   const matched = table.getFilteredRowModel().rows.length;
   const openCol = openFilter && p.columns.find((c) => idOf(c) === openFilter.id);
+  const headerSlot = useContext(PanelHeaderSlot);
+  const columnsButton = (
+    <Button size="xs" tone="ghost" title="Show, hide and reorder columns" onClick={(e) => setMenuAnchor(menuAnchor ? undefined : e.currentTarget)}>
+      <Columns3 size={13} /> Columns
+    </Button>
+  );
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2">
-        {p.toolbar}
-        <span className="ml-auto flex items-center gap-1.5">
-          {p.toolbarRight}
-          <Button size="xs" tone="ghost" title="Show, hide and reorder columns" onClick={(e) => setMenuAnchor(menuAnchor ? undefined : e.currentTarget)}>
-            <Columns3 size={13} /> Columns
-          </Button>
-        </span>
-      </div>
+      {/* Up in the panel header when there is one; otherwise on the toolbar row. */}
+      {headerSlot && createPortal(columnsButton, headerSlot)}
+      {(p.toolbar || p.toolbarRight || !headerSlot) && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2">
+          {p.toolbar}
+          <span className="ml-auto flex items-center gap-1.5">
+            {p.toolbarRight}
+            {!headerSlot && columnsButton}
+          </span>
+        </div>
+      )}
 
       {active.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 border-b border-line px-3 py-1.5">
@@ -206,7 +226,9 @@ export function DataTable<T>(p: DataTableProps<T>) {
       )}
 
       <div className="min-h-0 flex-1 overflow-auto">
-        <table className="border-separate border-spacing-0 text-xs" style={{ width: "100%", minWidth: table.getTotalSize(), tableLayout: "fixed" }}>
+        {/* At least as wide as its columns: on a narrow screen the panel scrolls sideways rather
+            than squeezing them. (min-width isn't reliable on tables, so this is the width itself.) */}
+        <table className="border-separate border-spacing-0 text-xs" style={{ width: `max(100%, ${table.getTotalSize()}px)`, tableLayout: "fixed" }}>
           <thead className="sticky top-0 z-10 bg-panel">
             {table.getHeaderGroups().map((hg) => (
               <tr key={hg.id}>
@@ -402,6 +424,12 @@ export function DataTable<T>(p: DataTableProps<T>) {
       )}
     </div>
   );
+}
+
+// Room a header needs: its label in the 10px uppercase, letter-spaced header type (about 7.3px a
+// character), the cell padding, the sort arrow, and the filter button if the column has one.
+function headerWidth(meta: ColMeta): number {
+  return Math.ceil(meta.label.length * 7.3 + 16 + 14 + (meta.filter ? 18 : 0));
 }
 
 // A row that flashes when its key changes. The animation starts from an effect rather than by
