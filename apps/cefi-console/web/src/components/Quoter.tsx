@@ -1364,56 +1364,59 @@ function TotalsBar({ d, bulk, onBulk }: { d: QuoterDeskStatus; bulk: boolean; on
   const item = "flex items-baseline gap-1.5";
   const label = "text-[10px] font-semibold uppercase tracking-wider text-muted";
   return (
-    <section className="num flex flex-wrap items-baseline gap-x-6 gap-y-1 rounded-md border border-line bg-panel px-3 py-1.5 text-xs">
-      <span className={label}>All books</span>
-      {d.totals.map((x) => {
-        const pnl = Number(x.realizedPnl) + Number(x.unrealizedPnl);
-        return (
-          <span key={x.quote} className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
-            <span className={item} title="Realized plus unrealized, since each book's position started counting">
-              <span className={label}>PnL</span>
-              {signed(pnl)} {quoteUnit(x.quote)}
-              <span className="text-faint">
-                ({signed(x.realizedPnl)} realized · {signed(x.unrealizedPnl)} open)
+    <section className="num flex items-center gap-3 rounded-md border border-line bg-panel px-3 py-1.5 text-xs">
+      {/* The figures share a baseline; the button sits centred beside them without making the bar taller. */}
+      <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-6 gap-y-1">
+        <span className={label}>All books</span>
+        {d.totals.map((x) => {
+          const pnl = Number(x.realizedPnl) + Number(x.unrealizedPnl);
+          return (
+            <span key={x.quote} className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
+              <span className={item} title="Realized plus unrealized, since each book's position started counting">
+                <span className={label}>PnL</span>
+                {signed(pnl)} {quoteUnit(x.quote)}
+                <span className="text-faint">
+                  ({signed(x.realizedPnl)} realized · {signed(x.unrealizedPnl)} open)
+                </span>
+              </span>
+              <span className={item}>
+                <span className={label}>Volume</span>
+                {fmtUsd(Number(x.volumeQuote))}
+              </span>
+              <span className={item}>
+                <span className={label}>Books</span>
+                {x.quoting}/{x.books} quoting · {x.orders} orders
+              </span>
+              <span className={item} title="New, modify and cancel requests sent">
+                <span className={label}>Requests</span>
+                {x.stats.creates} new · <span className="text-info">{x.stats.modifies} modify</span> · {x.stats.cancels} cancel
+              </span>
+              <span className={item}>
+                <span className={label}>Fills</span>
+                <span className="text-buy">{x.stats.fills}</span>
+                <span className="text-faint">· {x.stats.takeFills} from takes</span>
+                {x.stats.rejects > 0 && <span className="text-sell">· {x.stats.rejects} rejects</span>}
               </span>
             </span>
-            <span className={item}>
-              <span className={label}>Volume</span>
-              {fmtUsd(Number(x.volumeQuote))}
-            </span>
-            <span className={item}>
-              <span className={label}>Books</span>
-              {x.quoting}/{x.books} quoting · {x.orders} orders
-            </span>
-            <span className={item} title="New, modify and cancel requests sent">
-              <span className={label}>Requests</span>
-              {x.stats.creates} new · <span className="text-info">{x.stats.modifies} modify</span> · {x.stats.cancels} cancel
-            </span>
-            <span className={item}>
-              <span className={label}>Fills</span>
-              <span className="text-buy">{x.stats.fills}</span>
-              <span className="text-faint">· {x.stats.takeFills} from takes</span>
-              {x.stats.rejects > 0 && <span className="text-sell">· {x.stats.rejects} rejects</span>}
-            </span>
+          );
+        })}
+        {t.trades > 0 && (
+          <span className={item} title="Notional-weighted edge at fill, and what was left of it at each mark-out">
+            <span className={label}>Edge</span>
+            {bps(t.edgeBps)} at fill
+            {t.horizonsSecs.map((h, i) => (
+              <span key={h}>
+                · {bps(t.markouts[i])} at +{h}s
+              </span>
+            ))}
+            <span className="text-faint">bps</span>
           </span>
-        );
-      })}
-      {t.trades > 0 && (
-        <span className={item} title="Notional-weighted edge at fill, and what was left of it at each mark-out">
-          <span className={label}>Edge</span>
-          {bps(t.edgeBps)} at fill
-          {t.horizonsSecs.map((h, i) => (
-            <span key={h}>
-              · {bps(t.markouts[i])} at +{h}s
-            </span>
-          ))}
-          <span className="text-faint">bps</span>
-        </span>
-      )}
+        )}
+      </div>
       <Button
         size="xs"
         tone="ghost"
-        className="ml-auto self-center"
+        className="-my-1 shrink-0"
         aria-expanded={bulk}
         onClick={() => onBulk(!bulk)}
         title={bulk ? "Close the all-books parameter editor" : "Edit parameters across every book"}
