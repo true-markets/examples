@@ -24,6 +24,7 @@ import {
   useRemoveQuoterBook,
   useSession,
   useResetQuoterPosition,
+  useResetQuoterRejects,
   useSetQuoterReference,
   useUpdateQuoterParams,
 } from "../api.ts";
@@ -953,8 +954,25 @@ function BalancesCard({ s }: { s: QuoterStatus }) {
 
 function ActivityCard({ s }: { s: QuoterStatus }) {
   const st = s.stats;
+  const reset = useResetQuoterRejects();
+  const any = st.rejects + st.errors + (st.rateLimited ?? 0) + (st.rateLimitPauses ?? 0) > 0;
   return (
-    <Card title="Activity">
+    <Card
+      title="Activity"
+      action={
+        any && (
+          <Button
+            size="xs"
+            tone="ghost"
+            disabled={reset.isPending}
+            onClick={() => reset.mutate(s.market.symbol)}
+            title={`Start ${s.market.symbol}'s reject, error and rate-limit counts from zero. Requests, fills and the position keep counting`}
+          >
+            <RotateCcw size={12} /> Reset rejects
+          </Button>
+        )
+      }
+    >
       <Row label="New / modify / cancel" title="Requests sent">
         {st.creates} / <span className="text-info">{st.modifies}</span> / {st.cancels}
       </Row>
@@ -1490,18 +1508,34 @@ function AllBooksBar({ d, open, onToggle }: { d: QuoterDeskStatus; open: boolean
 
 // What every book has been doing; opens the all-books parameter editor.
 function ActivityBar({ d, open, onToggle }: { d: QuoterDeskStatus; open: boolean; onToggle: (open: boolean) => void }) {
+  const reset = useResetQuoterRejects();
   if (!d.books.length) return null;
+  const any = d.totals.some((x) => x.stats.rejects + x.stats.errors + (x.stats.rateLimited ?? 0) + (x.stats.rateLimitPauses ?? 0) > 0);
   return (
     <SummaryBar
       name="Activity"
       button={
-        <OpenButton
-          open={open}
-          onToggle={onToggle}
-          icon={<SlidersHorizontal size={12} />}
-          label="Parameters"
-          title={open ? "Close the all-books parameter editor" : "Edit parameters across every book"}
-        />
+        <>
+          {any && (
+            <Button
+              size="xs"
+              tone="ghost"
+              className="-my-1 shrink-0"
+              disabled={reset.isPending}
+              onClick={() => reset.mutate(undefined)}
+              title="Start every book's reject, error and rate-limit counts from zero. Requests, fills and positions keep counting"
+            >
+              <RotateCcw size={12} /> Reset rejects
+            </Button>
+          )}
+          <OpenButton
+            open={open}
+            onToggle={onToggle}
+            icon={<SlidersHorizontal size={12} />}
+            label="Parameters"
+            title={open ? "Close the all-books parameter editor" : "Edit parameters across every book"}
+          />
+        </>
       }
     >
       {d.totals.map((x) => {

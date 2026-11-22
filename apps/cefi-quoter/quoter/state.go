@@ -125,6 +125,15 @@ func (e *Engine) ResetPosition() {
 	e.Nudge()
 }
 
+// ResetRejects starts the book's reject, error and rate-limit counts again from zero. Everything
+// else (position, PnL, requests, fills) keeps counting.
+func (e *Engine) ResetRejects() {
+	e.mu.Lock()
+	e.stats.Rejects, e.stats.Errors, e.stats.RateLimited, e.stats.RateLimitPauses = 0, 0, 0, 0
+	e.eventLocked("info", "reject, error and rate-limit counts reset")
+	e.mu.Unlock()
+}
+
 // applyRecoveredFill counts a fill that happened while the quoter was down. The ledger isn't
 // debited: the balances read at start already include it.
 func (e *Engine) applyRecoveredFill(f Fill) {
@@ -226,6 +235,26 @@ func (d *Desk) ResetPosition(symbol string) error {
 		return fmt.Errorf("%s isn't added", symbol)
 	}
 	e.ResetPosition()
+	d.SaveState(false)
+	return nil
+}
+
+// ResetRejects starts one book's reject counts from zero, or every book's when symbol is "" (which
+// also forgets when the rate limit was last hit).
+func (d *Desk) ResetRejects(symbol string) error {
+	engines := d.engines()
+	if symbol != "" {
+		e := d.Engine(symbol)
+		if e == nil {
+			return fmt.Errorf("%s isn't added", symbol)
+		}
+		engines = []*Engine{e}
+	} else {
+		d.pacer.Forget()
+	}
+	for _, e := range engines {
+		e.ResetRejects()
+	}
 	d.SaveState(false)
 	return nil
 }

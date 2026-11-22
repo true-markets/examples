@@ -333,6 +333,13 @@ export const useResetQuoterPosition = () =>
     invalidate: ["quoter-book", "quoter-status"],
   });
 
+// Start one book's reject, error and rate-limit counts from zero, or every book's.
+export const useResetQuoterRejects = () =>
+  useAction((symbol?: string) => call("POST", symbol ? `${bookPath(symbol)}/reset-rejects` : "/api/quoter/reset-rejects"), {
+    success: (_r, symbol) => `${symbol ?? "Every book"}: reject counts reset`,
+    invalidate: ["quoter-book", "quoter-status"],
+  });
+
 export const useAddQuoterBook = () =>
   useAction((input: { symbol: string; reference?: string; blend?: QuoterBlend }) => call<{ market: { symbol: string } }>("POST", "/api/quoter/books", input), {
     success: (r) => `${r.market.symbol} added, stopped`,

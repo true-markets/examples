@@ -119,6 +119,17 @@ func (p *Pacer) Limited() time.Duration {
 	return p.pause
 }
 
+// Forget clears when the limit was last hit, for a reset of the counts. A pause still running, and
+// the backoff, are left alone: they're about the exchange, not the display.
+func (p *Pacer) Forget() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	p.lastLimited = time.Time{}
+	p.mu.Unlock()
+}
+
 // PausedFor is how long the pause has left (0 when not paused).
 func (p *Pacer) PausedFor() time.Duration {
 	if p == nil {

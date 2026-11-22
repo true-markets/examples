@@ -178,6 +178,29 @@ func TestRateLimitRejectPausesEveryBook(t *testing.T) {
 	if fx.resting("") != 12 {
 		t.Fatal("pulled quotes while rate limited")
 	}
+
+	// Resetting one book clears its counts only; resetting all clears the rest and the last hit.
+	eth.mu.Lock()
+	eth.stats.Rejects, eth.stats.RateLimited = 2, 2
+	eth.mu.Unlock()
+	if err := desk.ResetRejects("BTC-USDC"); err != nil {
+		t.Fatal(err)
+	}
+	if st := btc.Status().Stats; st.RateLimited != 0 || st.RateLimitPauses != 0 || st.Rejects != 0 || eth.Status().Stats.RateLimited != 2 {
+		t.Fatalf("one-book reset: btc %+v eth %+v", st, eth.Status().Stats)
+	}
+	if desk.Status().RateLimit.LastAt == nil {
+		t.Fatal("a one-book reset forgot the last hit")
+	}
+	if err := desk.ResetRejects(""); err != nil {
+		t.Fatal(err)
+	}
+	if st := eth.Status().Stats; st.RateLimited != 0 || st.Rejects != 0 || desk.Status().RateLimit.LastAt != nil {
+		t.Fatalf("all-books reset: eth %+v", st)
+	}
+	if err := desk.ResetRejects("NOPE-USDC"); err == nil {
+		t.Fatal("reset an unknown book")
+	}
 	before := fx.counts()["modify"]
 	tick(desk, "BTC-USD", "50100")
 	time.Sleep(300 * time.Millisecond)

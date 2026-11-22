@@ -61,6 +61,11 @@ export class QuoterClient {
     return this.call("POST", `/api/books/${encodeURIComponent(symbol)}/reset`);
   }
 
+  // Start one book's reject, error and rate-limit counts from zero, or every book's.
+  resetRejects(symbol?: string): Promise<unknown> {
+    return this.call("POST", symbol ? `/api/books/${encodeURIComponent(symbol)}/reset-rejects` : "/api/reset-rejects");
+  }
+
   // Start or stop one book, or every book when symbol is left out.
   control(action: "start" | "stop", symbol?: string): Promise<unknown> {
     return this.call("POST", symbol ? `/api/books/${encodeURIComponent(symbol)}/${action}` : `/api/${action}`);

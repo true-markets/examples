@@ -23,8 +23,10 @@
 //	POST   /api/books/{symbol}/start    start quoting one book
 //	POST   /api/books/{symbol}/stop     stop one book and pull its quotes
 //	POST   /api/books/{symbol}/reset    start its position, PnL and activity counts from zero
+//	POST   /api/books/{symbol}/reset-rejects  start its reject, error and rate-limit counts from zero
 //	POST   /api/start                   start every book
 //	POST   /api/stop                    stop every book and pull every quote
+//	POST   /api/reset-rejects           reset every book's reject, error and rate-limit counts
 //
 // When ADMIN_TOKEN is set every request needs "Authorization: Bearer <token>".
 package admin
@@ -182,6 +184,23 @@ func Handler(d *quoter.Desk, token string, log *slog.Logger) http.Handler {
 			return
 		}
 		log.Info("position reset over the management API", "book", r.PathValue("symbol"), "from", r.RemoteAddr)
+		writeJSON(w, http.StatusOK, map[string]bool{"reset": true})
+	})
+	mux.HandleFunc("POST /api/books/{symbol}/reset-rejects", func(w http.ResponseWriter, r *http.Request) {
+		if book(w, r) == nil {
+			return
+		}
+		if err := d.ResetRejects(r.PathValue("symbol")); err != nil {
+			fail(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"reset": true})
+	})
+	mux.HandleFunc("POST /api/reset-rejects", func(w http.ResponseWriter, r *http.Request) {
+		if err := d.ResetRejects(""); err != nil {
+			fail(w, http.StatusBadRequest, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]bool{"reset": true})
 	})
 	for action, on := range map[string]bool{"start": true, "stop": false} {

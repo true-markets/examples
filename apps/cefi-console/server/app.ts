@@ -117,6 +117,8 @@ export function createApp(backend: Backend, quoter?: QuoterClient): Hono {
     return c.json(await needQuoter().updateParams(bookSymbol(c.req.param("symbol")), body));
   });
   app.post("/api/quoter/books/:symbol/reset", async (c) => c.json(await needQuoter().resetPosition(bookSymbol(c.req.param("symbol")))));
+  app.post("/api/quoter/books/:symbol/reset-rejects", async (c) => c.json(await needQuoter().resetRejects(bookSymbol(c.req.param("symbol")))));
+  app.post("/api/quoter/reset-rejects", async (c) => c.json(await needQuoter().resetRejects()));
   app.post("/api/quoter/books/:symbol/:action{start|stop}", async (c) =>
     c.json(await needQuoter().control(c.req.param("action") as "start" | "stop", bookSymbol(c.req.param("symbol")))),
   );
