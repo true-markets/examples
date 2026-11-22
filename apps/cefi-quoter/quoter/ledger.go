@@ -59,6 +59,9 @@ type AssetBalance struct {
 	ForeignHold decimal.Decimal `json:"foreignHold"`
 	OurHold     decimal.Decimal `json:"ourHold"`
 	Free        decimal.Decimal `json:"free"`
+	// Price is one unit in the quote currency (USDC): 1 for the quote itself, a book's reference
+	// mid for a base asset, nil when no book prices it yet.
+	Price *decimal.Decimal `json:"price"`
 }
 
 func NewLedger() *Ledger {

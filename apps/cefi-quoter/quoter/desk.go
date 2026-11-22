@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"github.com/true-markets/examples/apps/cefi-quoter/reference"
 	"github.com/true-markets/examples/apps/cefi-quoter/tm"
 )
@@ -61,6 +62,7 @@ type DeskConfig struct {
 type Desk struct {
 	cfg     DeskConfig
 	ledger  *Ledger
+	journal *Journal
 	log     *slog.Logger
 	catalog map[string]Listing
 	names   map[string]string // asset id -> symbol
@@ -84,6 +86,7 @@ func NewDesk(cfg DeskConfig) *Desk {
 	d := &Desk{
 		cfg:          cfg,
 		ledger:       NewLedger(),
+		journal:      NewJournal(),
 		log:          cfg.Log,
 		catalog:      map[string]Listing{},
 		names:        map[string]string{},
@@ -107,6 +110,9 @@ func NewDesk(cfg DeskConfig) *Desk {
 }
 
 func (d *Desk) Ledger() *Ledger { return d.ledger }
+
+// Trades is every fill this run, newest first (up to limit; 0 for all), with mark-outs.
+func (d *Desk) Trades(limit int) TradesReport { return d.journal.Report(limit) }
 
 // --- books -----------------------------------------------------------------------------------
 
@@ -149,6 +155,7 @@ func (d *Desk) Add(ctx context.Context, symbol, ref string, params *Params, enab
 	}
 	book := NewBook(d.cfg.IDPrefix, l.InstrumentID)
 	e := NewEngine(market, p, d.cfg.Venue, d.ledger, d.cfg.NewTransport(market), book, enabled, d.log.With("book", symbol))
+	e.journal = d.journal
 
 	d.mu.Lock()
 	if _, exists := d.books[symbol]; exists {
@@ -423,6 +430,22 @@ type DeskStatus struct {
 	Books          []Summary             `json:"books"`
 	Available      []Listing             `json:"available"`
 	Warnings       []string              `json:"warnings"`
+	// Totals adds every book up, per quote currency (PnL and volume can't be added across them).
+	Totals []Totals `json:"totals"`
+	// Trades rolls up every fill this run: edge at fill and mark-outs.
+	Trades TradeSummary `json:"trades"`
+}
+
+// Totals is every book on one quote currency, added up.
+type Totals struct {
+	Quote         string          `json:"quote"`
+	Books         int             `json:"books"`
+	Quoting       int             `json:"quoting"`
+	RealizedPnl   decimal.Decimal `json:"realizedPnl"`
+	UnrealizedPnl decimal.Decimal `json:"unrealizedPnl"`
+	VolumeQuote   decimal.Decimal `json:"volumeQuote"`
+	Orders        int             `json:"orders"`
+	Stats         Stats           `json:"stats"`
 }
 
 func (d *Desk) Status() DeskStatus {
@@ -445,6 +468,23 @@ func (d *Desk) Status() DeskStatus {
 		s.Connections[ConnOrders] = &ConnState{Up: up, Reason: reason}
 	}
 	s.Balances = d.ledger.Snapshot(d.names)
+	// Value each asset in the quote currency: the quote is 1, a base asset is priced by any book's
+	// reference mid.
+	prices := map[string]decimal.Decimal{}
+	for _, e := range engines {
+		m := e.market
+		prices[m.QuoteAssetID] = decimal.NewFromInt(1)
+		e.mu.Lock()
+		if e.ref != nil && e.ref.Mid.IsPositive() {
+			prices[m.BaseAssetID] = e.ref.Mid
+		}
+		e.mu.Unlock()
+	}
+	for i := range s.Balances {
+		if px, ok := prices[s.Balances[i].AssetID]; ok {
+			s.Balances[i].Price = &px
+		}
+	}
 	sort.Slice(s.Balances, func(i, j int) bool { return s.Balances[i].Symbol < s.Balances[j].Symbol })
 	if t := d.ledger.ReadAt(); !t.IsZero() {
 		s.BalancesReadAt = &t
@@ -460,7 +500,45 @@ func (d *Desk) Status() DeskStatus {
 		}
 	}
 	s.Warnings = sharedFundsWarnings(s.Books)
+	s.Totals = totals(s.Books)
+	s.Trades = d.journal.Report(1).Total
 	return s
+}
+
+func totals(books []Summary) []Totals {
+	by := map[string]*Totals{}
+	var order []string
+	for _, b := range books {
+		q := b.Market.QuoteSymbol
+		t := by[q]
+		if t == nil {
+			t = &Totals{Quote: q}
+			by[q] = t
+			order = append(order, q)
+		}
+		t.Books++
+		if b.State == "quoting" {
+			t.Quoting++
+		}
+		t.RealizedPnl = t.RealizedPnl.Add(b.RealizedPnl)
+		t.UnrealizedPnl = t.UnrealizedPnl.Add(b.UnrealizedPnl)
+		t.VolumeQuote = t.VolumeQuote.Add(b.VolumeQuote)
+		t.Orders += b.Orders
+		st := b.Stats
+		t.Stats.Creates += st.Creates
+		t.Stats.Modifies += st.Modifies
+		t.Stats.Cancels += st.Cancels
+		t.Stats.Rejects += st.Rejects
+		t.Stats.Errors += st.Errors
+		t.Stats.Fills += st.Fills
+		t.Stats.Takes += st.Takes
+		t.Stats.TakeFills += st.TakeFills
+	}
+	out := []Totals{}
+	for _, q := range order {
+		out = append(out, *by[q])
+	}
+	return out
 }
 
 // sharedFundsWarnings flags running books that draw on the same asset with no allocation between

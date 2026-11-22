@@ -38,8 +38,9 @@ type Order struct {
 	ExternalID string // our id for the order (its first ClOrdID); the key everywhere
 	OrderID    string // the exchange's id, once we've heard it
 	Side       Side
-	Level      int  // 0 is the innermost; TakeLevel for a take
-	Take       bool // an IOC that crosses the spread, not a resting quote
+	Level      int      // 0 is the innermost; TakeLevel for a take
+	Take       bool     // an IOC that crosses the spread, not a resting quote
+	TakeKind   TakeKind // which taker sent it
 
 	Price    decimal.Decimal // what the exchange has confirmed
 	Qty      decimal.Decimal // the order's total quantity, filled part included
@@ -111,6 +112,7 @@ type Fill struct {
 	ExternalID string
 	Side       Side
 	Level      int
+	TakeKind   TakeKind // set for a take's fill
 	Price      decimal.Decimal
 	Qty        decimal.Decimal
 	Time       time.Time
@@ -236,12 +238,12 @@ const TakeLevel = -1
 
 // BeginTake registers an IOC take about to be sent. The drop copy settles it like any other order:
 // a fill, then CANCELED for whatever the book didn't have.
-func (b *Book) BeginTake(side Side, price, qty decimal.Decimal) *Order {
+func (b *Book) BeginTake(side Side, price, qty decimal.Decimal, kind TakeKind) *Order {
 	o := b.BeginCreate(side, TakeLevel, price, qty)
 	b.mu.Lock()
-	b.orders[o.ExternalID].Take = true
+	b.orders[o.ExternalID].Take, b.orders[o.ExternalID].TakeKind = true, kind
 	b.mu.Unlock()
-	o.Take = true
+	o.Take, o.TakeKind = true, kind
 	return o
 }
 
@@ -367,7 +369,7 @@ func (b *Book) ApplyDropCopy(d tm.DropCopy) DropCopyResult {
 	if exec, err := decimal.NewFromString(d.ExecutedQty); err == nil && exec.GreaterThan(o.Executed) {
 		qty := exec.Sub(o.Executed)
 		price := firstDecimal(d.TradePrice, d.ExecutedVwap, d.Price)
-		res.Fill = &Fill{ExternalID: o.ExternalID, Side: o.Side, Level: o.Level, Price: price, Qty: qty, Time: time.Now()}
+		res.Fill = &Fill{ExternalID: o.ExternalID, Side: o.Side, Level: o.Level, TakeKind: o.TakeKind, Price: price, Qty: qty, Time: time.Now()}
 		o.Executed = exec
 	}
 	if v, err := decimal.NewFromString(d.LeavesQty); err == nil {
@@ -531,7 +533,7 @@ func (b *Book) Resync(active []tm.RestOrder, graceFor time.Duration) (fills []Fi
 		o.OrderID = string(r.ID)
 		price, qty := r.CurrentTerms()
 		if exec, err := decimal.NewFromString(r.ExecutedQty); err == nil && exec.GreaterThan(o.Executed) {
-			fills = append(fills, Fill{ExternalID: o.ExternalID, Side: o.Side, Level: o.Level, Price: o.Price, Qty: exec.Sub(o.Executed), Time: time.Now()})
+			fills = append(fills, Fill{ExternalID: o.ExternalID, Side: o.Side, Level: o.Level, TakeKind: o.TakeKind, Price: o.Price, Qty: exec.Sub(o.Executed), Time: time.Now()})
 			o.Executed = exec
 		}
 		if v, err := decimal.NewFromString(r.LeavesQty); err == nil {

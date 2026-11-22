@@ -16,6 +16,7 @@ import type {
   QuoterParams,
   QuoterParamsResponse,
   QuoterStatus,
+  QuoterTradesReport,
   Session,
 } from "../../shared/api.ts";
 import { isCustodyPending, isCustodySettled, isDefiDone } from "../../shared/api.ts";
@@ -234,6 +235,15 @@ export const useQuoterStatus = (enabled: boolean) =>
     queryFn: () => call<QuoterDeskStatus>("GET", "/api/quoter/status"),
     enabled,
     refetchInterval: 1_000,
+    retry: false,
+  });
+
+export const useQuoterTrades = (enabled: boolean) =>
+  useQuery({
+    queryKey: ["quoter-trades"],
+    queryFn: () => call<QuoterTradesReport>("GET", "/api/quoter/trades?limit=500"),
+    enabled,
+    refetchInterval: 2_000,
     retry: false,
   });
 

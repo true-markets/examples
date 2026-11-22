@@ -308,6 +308,76 @@ export interface QuoterStatus {
   stats: { creates: number; modifies: number; cancels: number; rejects: number; errors: number; fills: number; takes: number; takeFills: number };
   events: QuoterEvent[];
   warnings: string[];
+  taking: QuoterTakeView | null;
+}
+
+// How close one side is to a take. BUY takes the best ask; SELL hits the best bid.
+export interface QuoterTakeSide {
+  side: "BUY" | "SELL";
+  kind: "profit take" | "takeout";
+  enabled: boolean;
+  price: string | null;
+  qty: string; // shown there by other people
+  edgeBps: number | null; // net, over the skewed mid
+  thresholdBps: number;
+  size: string; // what a take would send now
+  blocker?: string; // why it isn't taking; absent means it would
+}
+
+export interface QuoterTakeView {
+  buy: QuoterTakeSide;
+  sell: QuoterTakeSide;
+}
+
+type QuoterStats = QuoterStatus["stats"];
+
+// Every book on one quote currency, added up.
+export interface QuoterTotals {
+  quote: string;
+  books: number;
+  quoting: number;
+  realizedPnl: string;
+  unrealizedPnl: string;
+  volumeQuote: string;
+  orders: number;
+  stats: QuoterStats;
+}
+
+// One fill, with its edge at the time and mark-outs later (bps in our favor; null until due).
+export interface QuoterTrade {
+  id: number;
+  time: string;
+  symbol: string;
+  quote: string;
+  side: "BUY" | "SELL";
+  kind: string; // maker, profit take or takeout
+  level: number;
+  qty: string;
+  price: string;
+  notional: string;
+  refMid: string;
+  edgeBps: number;
+  markouts: (number | null)[];
+}
+
+export interface QuoterTradeSummary {
+  symbol: string; // "" for every book
+  trades: number;
+  notional: string;
+  edgeBps: number | null;
+  markouts: (number | null)[];
+  retention: (number | null)[];
+  marked: number[];
+  markedPnl: (number | null)[];
+  byKind: Record<string, number>;
+  horizonsSecs: number[];
+}
+
+export interface QuoterTradesReport {
+  trades: QuoterTrade[];
+  total: QuoterTradeSummary;
+  byBook: QuoterTradeSummary[];
+  horizonsSecs: number[];
 }
 
 // One line per book in the desk status.
@@ -326,6 +396,8 @@ export interface QuoterBookSummary {
   heldQuote: string;
   maxQuoteAlloc: string;
   maxBaseAlloc: string;
+  volumeQuote: string;
+  stats: QuoterStats;
 }
 
 // One asset in the ledger every book shares: free = spendable - foreign holds - our holds.
@@ -336,6 +408,7 @@ export interface QuoterAssetBalance {
   foreignHold: string;
   ourHold: string;
   free: string;
+  price: string | null; // one unit in the quote currency: 1 for USDC, a book's reference mid otherwise
 }
 
 export interface QuoterListing {
@@ -359,4 +432,6 @@ export interface QuoterDeskStatus {
   books: QuoterBookSummary[];
   available: QuoterListing[];
   warnings: string[];
+  totals: QuoterTotals[];
+  trades: QuoterTradeSummary;
 }

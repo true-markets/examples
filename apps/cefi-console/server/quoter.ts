@@ -15,6 +15,11 @@ export class QuoterClient {
     return this.call("GET", "/api/status");
   }
 
+  // Fills this run, newest first, with edge at fill and mark-outs.
+  trades(limit = 500): Promise<unknown> {
+    return this.call("GET", `/api/trades?limit=${Math.max(1, Math.min(5000, Math.floor(limit)))}`);
+  }
+
   book(symbol: string): Promise<unknown> {
     return this.call("GET", `/api/books/${encodeURIComponent(symbol)}`);
   }

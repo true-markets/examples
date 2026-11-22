@@ -4,6 +4,7 @@
 //
 //	GET    /api/status                  every book at a glance, shared balances, connections, and
 //	                                    the books that can be added
+//	GET    /api/trades?limit=500        fills this run, newest first, with edge at fill and mark-outs
 //	POST   /api/books                   add a book, stopped: {"symbol": "ETH-USDC", "reference": "ETH-USD"}
 //	GET    /api/books/{symbol}          one book in full: ladder, orders, position, events
 //	DELETE /api/books/{symbol}          remove a stopped book with nothing resting
@@ -23,6 +24,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/true-markets/examples/apps/cefi-quoter/quoter"
@@ -44,6 +46,13 @@ func Handler(d *quoter.Desk, token string, log *slog.Logger) http.Handler {
 
 	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, d.Status())
+	})
+	mux.HandleFunc("GET /api/trades", func(w http.ResponseWriter, r *http.Request) {
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		if limit <= 0 || limit > 5000 {
+			limit = 500
+		}
+		writeJSON(w, http.StatusOK, d.Trades(limit))
 	})
 	mux.HandleFunc("POST /api/books", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {

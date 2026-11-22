@@ -132,6 +132,12 @@ In paper mode the exchange's best bid and offer are the reference's, with its si
 
 Left out of the port: the momentum taker (retired in the Python quoter: it made 1–3 bps gross against 6–10 bps of taker cost), takes against our own ladder's targets, mark-out learning and the regime gates.
 
+### Trades and edge retention
+
+Every fill goes in a journal ([quoter/journal.go](quoter/journal.go)) with its **edge at fill**: how far the price was from fair value (the reference mid) in your favor, in bps. The same measure is taken again 30 seconds and 5 minutes later; those are the **mark-outs**. A maker is filled exactly when the market moves through its quote, so the mid often keeps going. A fill with +10 bps of edge that marks out at −5 bps was a loser, however good it looked when it happened. That's adverse selection, and it's what the spread has to pay for. **Kept** is the mark-out over the edge at fill: 100% means the edge held, and below 0 means the market took all of it and more.
+
+The Quoter screen's Trades view shows every fill with its mark-outs, and a summary per book and across all books, weighted by notional. Watch it when you change the spread: a wider spread earns more edge at fill, and the mark-outs show how much of it survives. The journal lives in memory, for this run only.
+
 ### Following orders: the drop copy
 
 `DROPCOPY` on the CeFi WebSocket sends the full state of one of your orders every time it changes. The quoter treats it as the only source of truth:
@@ -223,7 +229,8 @@ Position and PnL count each book's fills since this run started, at average cost
 ## Management API
 
 ```bash
-curl http://127.0.0.1:4860/api/status                    # every book, shared balances, connections, books on offer
+curl http://127.0.0.1:4860/api/status                    # every book, totals, shared balances, connections, books on offer
+curl http://127.0.0.1:4860/api/trades?limit=100          # fills this run, newest first, with edge at fill and mark-outs
 curl -X POST http://127.0.0.1:4860/api/books -d '{"symbol": "ETH-USDC"}'   # add a book, stopped ("reference" optional)
 curl http://127.0.0.1:4860/api/books/ETH-USDC            # one book: ladder, orders, position, events
 curl http://127.0.0.1:4860/api/books/ETH-USDC/params     # its settings, and a schema describing each one

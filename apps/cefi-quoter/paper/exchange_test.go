@@ -79,7 +79,7 @@ func TestTakeFillsAgainstTheReferenceBook(t *testing.T) {
 	}
 
 	book := quoter.NewBook("cq", l.InstrumentID)
-	o := book.BeginTake(quoter.Sell, d("100"), d("0.5")) // only 0.3 is bid
+	o := book.BeginTake(quoter.Sell, d("100"), d("0.5"), quoter.ProfitTake) // only 0.3 is bid
 	if _, err := x.Transport(m).Create(ctx, o); err != nil {
 		t.Fatal(err)
 	}

@@ -26,6 +26,7 @@ type Status struct {
 	Stats     Stats            `json:"stats"`
 	Events    []Event          `json:"events"`
 	Warnings  []string         `json:"warnings"`
+	Taking    *TakeView        `json:"taking"` // how close each side is to a take
 }
 
 type Price struct {
@@ -100,6 +101,7 @@ func (e *Engine) Status() Status {
 		Orders:   []OrderStatus{},
 		Targets:  append(append([]Target{}, e.lastLadder.Bids...), e.lastLadder.Asks...),
 		Warnings: []string{},
+		Taking:   e.takeView,
 	}
 	if e.ref != nil {
 		s.Reference = &Price{Mid: e.ref.Mid, Bid: e.ref.Bid, Ask: e.ref.Ask, AgeMs: time.Since(e.ref.Time).Milliseconds()}
@@ -206,6 +208,8 @@ type Summary struct {
 	HeldQuote     decimal.Decimal  `json:"heldQuote"`
 	MaxQuoteAlloc decimal.Decimal  `json:"maxQuoteAlloc"`
 	MaxBaseAlloc  decimal.Decimal  `json:"maxBaseAlloc"`
+	VolumeQuote   decimal.Decimal  `json:"volumeQuote"`
+	Stats         Stats            `json:"stats"`
 	BaseCapped    bool             `json:"-"`
 }
 
@@ -216,7 +220,8 @@ func (e *Engine) Summary() Summary {
 		Position: s.Position.Qty, RealizedPnl: s.Position.RealizedPnl, UnrealizedPnl: s.Position.UnrealizedPnl,
 		Orders: len(s.Orders), Fills: s.Stats.Fills, HeldBase: s.Balances.HeldBase, HeldQuote: s.Balances.HeldQuote,
 		MaxQuoteAlloc: s.Params.MaxQuoteAlloc, MaxBaseAlloc: s.Params.MaxBaseAlloc,
-		BaseCapped: s.Params.MaxBaseAlloc.IsPositive(),
+		BaseCapped:  s.Params.MaxBaseAlloc.IsPositive(),
+		VolumeQuote: s.Position.VolumeQuote, Stats: s.Stats,
 	}
 	if s.Reference != nil {
 		m := s.Reference.Mid

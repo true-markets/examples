@@ -64,49 +64,84 @@ type takeDecision struct {
 	Unfunded bool
 }
 
+// TakeSide is how close one side is to a take, for the management screen: the price a take would
+// cross to, the edge it offers now, the edge it needs, and what (if anything) stands in the way.
+type TakeSide struct {
+	Side         Side             `json:"side"` // BUY takes the best ask; SELL hits the best bid
+	Kind         TakeKind         `json:"kind"` // which taker this side belongs to right now
+	Enabled      bool             `json:"enabled"`
+	Price        *decimal.Decimal `json:"price"`        // the best price on the other side, or nil if empty
+	Qty          decimal.Decimal  `json:"qty"`          // shown there by other people (ours excluded)
+	EdgeBps      *float64         `json:"edgeBps"`      // net edge over the skewed mid, after the fee
+	ThresholdBps float64          `json:"thresholdBps"` // what it needs
+	Size         decimal.Decimal  `json:"size"`         // what a take would send now
+	// Blocker is why it isn't taking ("" means it would): off, nothing to take, no edge, below
+	// cost, at the limit, too small, no funds (it pulls a quote first), and from the engine,
+	// cool-down, take in flight, not quoting.
+	Blocker string `json:"blocker,omitempty"`
+}
+
+// TakeView is both sides.
+type TakeView struct {
+	Buy  TakeSide `json:"buy"`
+	Sell TakeSide `json:"sell"`
+}
+
+// evaluateTakes works out both sides, and the take to send (or nil).
+func evaluateTakes(in takeInput) (TakeView, *takeDecision) {
+	view := TakeView{Buy: evaluateSide(in, Buy, in.BestAsk, in.AskQty), Sell: evaluateSide(in, Sell, in.BestBid, in.BidQty)}
+	var best *takeDecision
+	for _, ts := range []TakeSide{view.Buy, view.Sell} {
+		if ts.Blocker != "" && ts.Blocker != blockedNoFunds {
+			continue
+		}
+		d := &takeDecision{Kind: ts.Kind, Side: ts.Side, Price: *ts.Price, Qty: ts.Size, EdgeBps: *ts.EdgeBps, Unfunded: ts.Blocker == blockedNoFunds}
+		// A profit take beats a takeout; otherwise the bigger edge wins.
+		if best == nil || (d.Kind == ProfitTake && best.Kind != ProfitTake) || (d.Kind == best.Kind && d.EdgeBps > best.EdgeBps) {
+			best = d
+		}
+	}
+	return view, best
+}
+
 // decideTake picks the best take this cycle, or nil.
 func decideTake(in takeInput) *takeDecision {
+	_, d := evaluateTakes(in)
+	return d
+}
+
+const blockedNoFunds = "no funds (pulls a quote first)"
+
+func evaluateSide(in takeInput, side Side, price *decimal.Decimal, extQty decimal.Decimal) TakeSide {
 	p := in.Params
-	if !in.Mid.IsPositive() || (!p.ProfitTaker && !p.Takeout) {
-		return nil
+	flatten := isFlatten(side, in.Position)
+	ts := TakeSide{Side: side, Kind: Takeout, Enabled: p.Takeout, Price: price, Qty: extQty, ThresholdBps: takeThreshold(p, side, in.Position)}
+	if flatten {
+		ts.Kind, ts.Enabled = ProfitTake, p.ProfitTaker
 	}
-	var best *takeDecision
-	consider := func(side Side, price *decimal.Decimal, extQty decimal.Decimal) {
-		if price == nil || !extQty.IsPositive() {
-			return
-		}
-		flatten := isFlatten(side, in.Position)
-		if (flatten && !p.ProfitTaker) || (!flatten && !p.Takeout) {
-			return
-		}
+	if price != nil && in.Mid.IsPositive() {
 		// Net edge in bps: what crossing at this price gains over fair value, after the fee.
 		gain := in.Mid.Sub(*price)
 		if side == Sell {
 			gain = price.Sub(in.Mid)
 		}
 		edge := gain.Div(in.Mid).Mul(tenK).InexactFloat64() - p.TakerFeeBps
-		if edge < takeThreshold(p, side, in.Position) {
-			return
-		}
-		if flatten && !clearsBasis(side, *price, in.AvgCost, p.TakerFeeBps) {
-			return
-		}
-		qty, unfunded := sizeTake(p, side, *price, extQty, in)
-		if !qty.IsPositive() && !unfunded {
-			return
-		}
-		d := &takeDecision{Side: side, Price: *price, Qty: qty, EdgeBps: edge, Kind: Takeout, Unfunded: unfunded}
-		if flatten {
-			d.Kind = ProfitTake
-		}
-		// A profit take beats a takeout; otherwise the bigger edge wins.
-		if best == nil || (d.Kind == ProfitTake && best.Kind != ProfitTake) || (d.Kind == best.Kind && d.EdgeBps > best.EdgeBps) {
-			best = d
-		}
+		ts.EdgeBps = &edge
 	}
-	consider(Buy, in.BestAsk, in.AskQty)
-	consider(Sell, in.BestBid, in.BidQty)
-	return best
+	switch {
+	case !ts.Enabled:
+		ts.Blocker = "off"
+	case price == nil || !extQty.IsPositive() || ts.EdgeBps == nil:
+		ts.Blocker = "nothing to take"
+	case *ts.EdgeBps < ts.ThresholdBps:
+		ts.Blocker = "no edge"
+	case flatten && !clearsBasis(side, *price, in.AvgCost, p.TakerFeeBps):
+		ts.Blocker = "below cost"
+	default:
+		qty, why := sizeTake(p, side, *price, extQty, in)
+		ts.Size, ts.Blocker = qty, why
+	}
+	return ts
 }
 
 // isFlatten reports a take that shrinks the position: a sell while long, a buy while short.
@@ -160,10 +195,10 @@ func clearsBasis(side Side, price, avgCost decimal.Decimal, feeBps float64) bool
 
 // sizeTake is the take's size: the least of what the book shows, the max take size (tapered for
 // takeout), the room under the position limit, and what's free to trade with, on the lot. A
-// profit take stops at flat. unfunded is set when everything but the funds allowed a profit take.
-func sizeTake(p Params, side Side, price, extQty decimal.Decimal, in takeInput) (qty decimal.Decimal, unfunded bool) {
+// profit take stops at flat. why says what made it zero.
+func sizeTake(p Params, side Side, price, extQty decimal.Decimal, in takeInput) (qty decimal.Decimal, why string) {
 	if !p.TakeMaxSize.IsPositive() {
-		return decimal.Zero, false
+		return decimal.Zero, "too small"
 	}
 	flatten := isFlatten(side, in.Position)
 	limit := p.TakeMaxSize
@@ -182,6 +217,9 @@ func sizeTake(p Params, side Side, price, extQty decimal.Decimal, in takeInput) 
 			}
 		}
 	}
+	if !room.IsPositive() {
+		return decimal.Zero, "at the limit"
+	}
 	funds := in.FreeBase
 	if side == Buy {
 		funds = in.FreeQuote.Mul(feeHeadroom).Div(price)
@@ -189,8 +227,14 @@ func sizeTake(p Params, side Side, price, extQty decimal.Decimal, in takeInput) 
 	inc := IncrementsFor(price)
 	want := formatSize(price, decimal.Min(extQty, limit, room), inc)
 	if !want.IsPositive() {
-		return decimal.Zero, false
+		return decimal.Zero, "too small"
 	}
 	qty = formatSize(price, decimal.Min(want, funds), inc)
-	return qty, flatten && !qty.IsPositive()
+	if qty.IsPositive() {
+		return qty, ""
+	}
+	if flatten {
+		return decimal.Zero, blockedNoFunds
+	}
+	return decimal.Zero, "no funds"
 }

@@ -346,6 +346,14 @@ func TestEngineQuotesWithModifies(t *testing.T) {
 	if fx.counts()["reject"] != 0 {
 		t.Fatalf("rejects: %v", fx.counts())
 	}
+	// The desk adds the book up, and the journal has the fill.
+	ds := desk.Status()
+	if len(ds.Totals) != 1 || ds.Totals[0].Stats.Fills != 1 || !ds.Totals[0].VolumeQuote.IsPositive() || ds.Trades.Trades != 1 {
+		t.Fatalf("totals %+v trades %+v", ds.Totals, ds.Trades)
+	}
+	if tr := desk.Trades(10); len(tr.Trades) != 1 || tr.Trades[0].Kind != "maker" || tr.Trades[0].Side != Buy {
+		t.Fatalf("trades %+v", tr.Trades)
+	}
 }
 
 // Two books on one quote asset, with enough USDC for about one of their bid ladders. Separate

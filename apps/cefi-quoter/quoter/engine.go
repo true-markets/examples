@@ -84,6 +84,8 @@ type Engine struct {
 	bestAskQty  decimal.Decimal
 	ebboAt      time.Time
 	lastTake    time.Time
+	takeView    *TakeView
+	journal     *Journal
 	conns       map[string]*ConnState
 	budgetBase  decimal.Decimal
 	budgetQuote decimal.Decimal
@@ -162,6 +164,9 @@ func (e *Engine) OnReference(t reference.Tick) {
 	e.mu.Lock()
 	e.ref = &t
 	e.mu.Unlock()
+	if e.journal != nil {
+		e.journal.Mark(e.market.Symbol, t.Mid, time.Now())
+	}
 	e.Nudge()
 }
 
@@ -351,6 +356,10 @@ func (e *Engine) cycle(ctx context.Context) {
 		e.lastLadder = Ladder{}
 	}
 	ladder := e.lastLadder
+	orders := e.book.Snapshot()
+	// How close each side is to a take, worked out every cycle (even when stopped) for the screen.
+	view, take := e.takeLocked(p, ladder.Mid, orders)
+	e.takeView = view
 
 	halt, pull := e.haltReasonLocked()
 	// Logged when the reason changes, not every cycle: "(1.2s)" ticking up isn't a new reason.
@@ -373,9 +382,7 @@ func (e *Engine) cycle(ctx context.Context) {
 		e.mu.Unlock()
 		return
 	}
-	orders := e.book.Snapshot()
 	// A take goes first: it decides whether to cross before the ladder spends the free balance.
-	take := e.takeLocked(p, ladder.Mid, orders)
 	quotes := orders[:0:0]
 	for _, o := range orders {
 		if !o.Take {
@@ -699,6 +706,9 @@ func (p *position) apply(side Side, qty, price decimal.Decimal) {
 func (e *Engine) applyFillLocked(f Fill, debit func(assetID string, amount decimal.Decimal)) {
 	e.pos.apply(f.Side, f.Qty, f.Price)
 	e.stats.Fills++
+	if e.journal != nil && e.ref != nil {
+		e.journal.Add(e.market, f, e.ref.Mid)
+	}
 	if f.Level == TakeLevel {
 		e.stats.TakeFills++
 	}
@@ -783,19 +793,11 @@ func diffParams(a, b Params) []string {
 
 // --- taking (see taker.go) -------------------------------------------------------------------
 
-// takeLocked decides whether to cross this cycle. One take at a time, and none within the
-// cool-down of the last.
-func (e *Engine) takeLocked(set Params, mid decimal.Decimal, orders []Order) *takeDecision {
-	if (!set.ProfitTaker && !set.Takeout) || e.ref == nil || !mid.IsPositive() {
-		return nil
-	}
-	if time.Since(e.lastTake) < time.Duration(set.TakeCoolDownMs)*time.Millisecond {
-		return nil
-	}
-	for _, o := range orders {
-		if o.Take {
-			return nil // the last one hasn't been settled yet
-		}
+// takeLocked works out both sides' take proximity, and the take to send this cycle (or nil). One
+// take at a time, none within the cool-down of the last, and none while the book isn't quoting.
+func (e *Engine) takeLocked(set Params, mid decimal.Decimal, orders []Order) (*TakeView, *takeDecision) {
+	if e.ref == nil || !mid.IsPositive() {
+		return nil, nil
 	}
 	// What other people show at the best prices: our own quotes there aren't liquidity we can take.
 	external := func(best *decimal.Decimal, qty decimal.Decimal, side Side) decimal.Decimal {
@@ -803,13 +805,13 @@ func (e *Engine) takeLocked(set Params, mid decimal.Decimal, orders []Order) *ta
 			return decimal.Zero
 		}
 		for _, o := range orders {
-			if o.Side == side && o.EffectivePrice().Equal(*best) {
+			if !o.Take && o.Side == side && o.EffectivePrice().Equal(*best) {
 				qty = qty.Sub(o.EffectiveLeaves())
 			}
 		}
 		return decimal.Max(qty, decimal.Zero)
 	}
-	return decideTake(takeInput{
+	view, d := evaluateTakes(takeInput{
 		Params:    set.InBase(e.ref.Mid),
 		Mid:       mid,
 		Position:  e.pos.qty,
@@ -821,6 +823,28 @@ func (e *Engine) takeLocked(set Params, mid decimal.Decimal, orders []Order) *ta
 		FreeBase:  e.ledger.Free(e.market.BaseAssetID),
 		FreeQuote: e.ledger.Free(e.market.QuoteAssetID),
 	})
+	// What holds back a take that the book itself would allow.
+	hold := ""
+	if halt, _ := e.haltReasonLocked(); halt != "" {
+		hold = "not quoting"
+	} else if left := time.Duration(set.TakeCoolDownMs)*time.Millisecond - time.Since(e.lastTake); left > 0 {
+		hold = "cool-down"
+	} else {
+		for _, o := range orders {
+			if o.Take {
+				hold = "take in flight"
+			}
+		}
+	}
+	if hold != "" {
+		for _, ts := range []*TakeSide{&view.Buy, &view.Sell} {
+			if ts.Blocker == "" || ts.Blocker == blockedNoFunds {
+				ts.Blocker = hold
+			}
+		}
+		d = nil
+	}
+	return &view, d
 }
 
 // executeTake sends a take as an IOC, after reserving its funds like any order. If a profit take
@@ -861,7 +885,7 @@ func (e *Engine) executeTake(ctx context.Context, d *takeDecision, quotes []Orde
 	var o *Order
 	e.ledger.Reserve(e.book, asset, alloc, func(room decimal.Decimal) {
 		if qty := fit(d.Side, d.Price, d.Qty, decimal.Zero, room); qty.IsPositive() {
-			o = e.book.BeginTake(d.Side, d.Price, qty)
+			o = e.book.BeginTake(d.Side, d.Price, qty, d.Kind)
 		}
 	})
 	if o == nil {

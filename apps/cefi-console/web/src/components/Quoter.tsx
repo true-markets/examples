@@ -2,9 +2,20 @@ import { CircleAlert, CircleHelp, Play, Plus, RotateCcw, Square, Trash2 } from "
 import { createContext, Fragment, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
 import { Panel as Pane } from "react-resizable-panels";
 import { Divider, pane, Split } from "./Layout.tsx";
-import type { QuoterBookSummary, QuoterDeskStatus, QuoterOrder, QuoterParamSpec, QuoterParams, QuoterStatus, QuoterTarget } from "../../../shared/api.ts";
+import type {
+  QuoterBookSummary,
+  QuoterDeskStatus,
+  QuoterTakeSide,
+  QuoterTradeSummary,
+  QuoterOrder,
+  QuoterParamSpec,
+  QuoterParams,
+  QuoterStatus,
+  QuoterTarget,
+} from "../../../shared/api.ts";
 import {
   useAddQuoterBook,
+  useQuoterTrades,
   useQuoterBook,
   useQuoterControl,
   useQuoterParams,
@@ -28,6 +39,7 @@ export function QuoterScreen() {
   const desk = status.data;
   const [picked, setPicked] = useState<string>();
   const [help, setHelp] = useHelpSetting();
+  const [tab, setTab] = useStoredChoice<"books" | "trades">("cefi-console:quoter-tab", "books", ["books", "trades"]);
   const books = desk?.books ?? [];
   // The picked book, or the first one if it's gone (removed) or nothing was picked yet.
   const selected = books.find((b) => b.market.symbol === picked)?.market.symbol ?? books[0]?.market.symbol;
@@ -52,38 +64,43 @@ export function QuoterScreen() {
   return (
     <ShowHelp.Provider value={help}>
       <div className="flex h-full min-h-0 flex-col gap-2">
-        <DeskBar d={desk} stale={!!status.error} help={help} onHelp={setHelp} />
+        <DeskBar d={desk} stale={!!status.error} help={help} onHelp={setHelp} tab={tab} onTab={setTab} />
+        <TotalsBar d={desk} />
         <Warnings list={desk.warnings} />
         <div className="min-h-0 flex-1">
-          <Split id="quoter" orientation="horizontal">
-            <Pane id="quoter-left" defaultSize="22" minSize={260}>
-              <Split id="quoter-left" orientation="vertical">
-                <Pane id="quoter-books" defaultSize="55" minSize={120}>
-                  <div className={pane}>
-                    <BooksPanel d={desk} selected={selected} onSelect={setPicked} />
-                  </div>
-                </Pane>
-                <Divider vertical />
-                <Pane id="quoter-balances" defaultSize="45" minSize={100}>
-                  <div className={pane}>
-                    <SharedBalancesPanel d={desk} />
-                  </div>
-                </Pane>
-              </Split>
-            </Pane>
-            <Divider />
-            <Pane id="quoter-book" defaultSize="78" minSize="40">
-              <div className={pane}>
-                {selected ? (
-                  <BookView key={selected} symbol={selected} live={desk.environment === "production"} paper={desk.mode === "paper"} />
-                ) : (
-                  <Panel title="No books yet" className="h-full">
-                    <Empty>Add a book on the left. It starts stopped, with a preview of what it would quote, until you start it.</Empty>
-                  </Panel>
-                )}
-              </div>
-            </Pane>
-          </Split>
+          {tab === "trades" ? (
+            <TradesView />
+          ) : (
+            <Split id="quoter" orientation="horizontal">
+              <Pane id="quoter-left" defaultSize="22" minSize={260}>
+                <Split id="quoter-left" orientation="vertical">
+                  <Pane id="quoter-books" defaultSize="55" minSize={120}>
+                    <div className={pane}>
+                      <BooksPanel d={desk} selected={selected} onSelect={setPicked} />
+                    </div>
+                  </Pane>
+                  <Divider vertical />
+                  <Pane id="quoter-balances" defaultSize="45" minSize={100}>
+                    <div className={pane}>
+                      <SharedBalancesPanel d={desk} />
+                    </div>
+                  </Pane>
+                </Split>
+              </Pane>
+              <Divider />
+              <Pane id="quoter-book" defaultSize="78" minSize="40">
+                <div className={pane}>
+                  {selected ? (
+                    <BookView key={selected} symbol={selected} live={desk.environment === "production"} paper={desk.mode === "paper"} />
+                  ) : (
+                    <Panel title="No books yet" className="h-full">
+                      <Empty>Add a book on the left. It starts stopped, with a preview of what it would quote, until you start it.</Empty>
+                    </Panel>
+                  )}
+                </div>
+              </Pane>
+            </Split>
+          )}
         </div>
       </div>
     </ShowHelp.Provider>
@@ -130,6 +147,27 @@ function useHelpSetting(): [boolean, (on: boolean) => void] {
   return [on, set];
 }
 
+// A choice kept per browser, like the Help switch.
+function useStoredChoice<T extends string>(key: string, fallback: T, allowed: readonly T[]): [T, (v: T) => void] {
+  const [v, setV] = useState<T>(() => {
+    try {
+      const got = localStorage.getItem(key) as T | null;
+      return got && allowed.includes(got) ? got : fallback;
+    } catch {
+      return fallback;
+    }
+  });
+  const set = (next: T) => {
+    setV(next);
+    try {
+      localStorage.setItem(key, next);
+    } catch {
+      // not remembered
+    }
+  };
+  return [v, set];
+}
+
 function Help({ children }: { children: ReactNode }) {
   return useContext(ShowHelp) ? <>{children}</> : null;
 }
@@ -154,7 +192,21 @@ function StateBadge({ state }: { state: QuoterStatus["state"] }) {
 
 // ---------- the whole quoter ----------
 
-function DeskBar({ d, stale, help, onHelp }: { d: QuoterDeskStatus; stale: boolean; help: boolean; onHelp: (on: boolean) => void }) {
+function DeskBar({
+  d,
+  stale,
+  help,
+  onHelp,
+  tab,
+  onTab,
+}: {
+  d: QuoterDeskStatus;
+  stale: boolean;
+  help: boolean;
+  onHelp: (on: boolean) => void;
+  tab: "books" | "trades";
+  onTab: (t: "books" | "trades") => void;
+}) {
   const control = useQuoterControl();
   const [confirm, setConfirm] = useState(false);
   const live = d.environment === "production";
@@ -169,6 +221,20 @@ function DeskBar({ d, stale, help, onHelp }: { d: QuoterDeskStatus; stale: boole
   return (
     <section className="flex flex-wrap items-center gap-3 rounded-md border border-line bg-panel px-3 py-2">
       <span className="text-sm font-semibold">Quoter</span>
+      <div className="flex rounded border border-line p-0.5" role="tablist" aria-label="Quoter view">
+        {(["books", "trades"] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            role="tab"
+            aria-selected={tab === t}
+            onClick={() => onTab(t)}
+            className={cx("rounded px-2 py-0.5 text-[11px] font-semibold", tab === t ? "bg-raised text-ink" : "text-muted hover:text-ink")}
+          >
+            {t === "books" ? "Books" : `Trades${d.trades.trades ? ` (${d.trades.trades})` : ""}`}
+          </button>
+        ))}
+      </div>
       <span
         className={cx(
           "rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wider",
@@ -360,7 +426,7 @@ function SharedBalancesPanel({ d }: { d: QuoterDeskStatus }) {
           <table className="num w-full text-xs">
             <thead className="text-[11px] text-muted">
               <tr className="border-b border-line">
-                <th className={cx(th, "text-left")}>Asset</th>
+                <th className="px-1.5 py-1.5 text-left font-medium">Asset</th>
                 <th className={th} title="Balance less transfer holds and anything leaving at settlement, less fills since the last read">
                   Spendable
                 </th>
@@ -374,15 +440,38 @@ function SharedBalancesPanel({ d }: { d: QuoterDeskStatus }) {
               </tr>
             </thead>
             <tbody>
-              {d.balances.map((a) => (
-                <tr key={a.assetId} className="border-b border-line/60">
-                  <td className="px-1.5 py-1.5">{a.symbol || a.assetId}</td>
-                  <td className={td}>{fmtQty(a.spendable)}</td>
-                  <td className={td}>{fmtQty(a.ourHold)}</td>
-                  <td className={cx(td, "text-faint")}>{Number(a.foreignHold) ? fmtQty(a.foreignHold) : "—"}</td>
-                  <td className={td}>{fmtQty(a.free)}</td>
+              {d.balances.map((a) => {
+                // Each amount with its value in the quote currency (USDC) under it, as in the ladder.
+                const cell = (v: string) => (
+                  <>
+                    {fmtQty(v)}
+                    {a.price && Number(a.price) !== 1 && <Dollars qty={v} price={a.price} />}
+                  </>
+                );
+                return (
+                  <tr key={a.assetId} className="border-b border-line/60 align-top">
+                    <td className="px-1.5 py-1.5" title={a.price ? `${fmtPrice(a.price)} each` : "no book prices it yet"}>
+                      {a.symbol || a.assetId}
+                    </td>
+                    <td className={td}>{cell(a.spendable)}</td>
+                    <td className={td}>{cell(a.ourHold)}</td>
+                    <td className={cx(td, "text-faint")}>{Number(a.foreignHold) ? cell(a.foreignHold) : "—"}</td>
+                    <td className={td}>{cell(a.free)}</td>
+                  </tr>
+                );
+              })}
+              {d.balances.some((a) => a.price) && (
+                <tr className="font-semibold">
+                  <td className="px-1.5 py-1.5" title="Everything priced, in the quote currency">
+                    Total $
+                  </td>
+                  {(["spendable", "ourHold", "foreignHold", "free"] as const).map((k) => (
+                    <td key={k} className={td}>
+                      {fmtUsd(d.balances.reduce((sum, a) => sum + (a.price ? Number(a[k]) * Number(a.price) : 0), 0))}
+                    </td>
+                  ))}
                 </tr>
-              ))}
+              )}
               {d.balances.length === 0 && (
                 <tr>
                   <td colSpan={5}>
@@ -418,9 +507,10 @@ function BookView({ symbol, live, paper }: { symbol: string; live: boolean; pape
         <Split id="quoter-detail" orientation="vertical">
           <Pane id="quoter-cards" defaultSize="26" minSize={80}>
             <div className={cx(pane, "overflow-y-auto")}>
-              <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
                 <PricesCard s={s} paper={paper} />
                 <PositionCard s={s} />
+                <TakingCard s={s} />
                 <BalancesCard s={s} />
                 <ActivityCard s={s} />
               </div>
@@ -957,5 +1047,285 @@ function EventsPanel({ s }: { s: QuoterStatus }) {
         ))}
       </div>
     </Panel>
+  );
+}
+
+// ---------- totals across books ----------
+
+function bps(v: number | null | undefined, digits = 1) {
+  if (v === null || v === undefined || !Number.isFinite(v)) return <span className="text-faint">—</span>;
+  return <span className={v > 0 ? "text-buy" : v < 0 ? "text-sell" : ""}>{(v > 0 ? "+" : "") + v.toFixed(digits)}</span>;
+}
+
+function pct(v: number | null | undefined) {
+  if (v === null || v === undefined || !Number.isFinite(v)) return <span className="text-faint">—</span>;
+  return <span className={v >= 0.5 ? "text-buy" : v < 0 ? "text-sell" : "text-accent"}>{Math.round(v * 100)}%</span>;
+}
+
+function TotalsBar({ d }: { d: QuoterDeskStatus }) {
+  if (!d.books.length) return null;
+  const t = d.trades;
+  const item = "flex items-baseline gap-1.5";
+  const label = "text-[10px] font-semibold uppercase tracking-wider text-muted";
+  return (
+    <section className="num flex flex-wrap items-baseline gap-x-6 gap-y-1 rounded-md border border-line bg-panel px-3 py-1.5 text-xs">
+      <span className={label}>All books</span>
+      {d.totals.map((x) => {
+        const pnl = Number(x.realizedPnl) + Number(x.unrealizedPnl);
+        return (
+          <span key={x.quote} className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
+            <span className={item} title="Realized plus unrealized, since start">
+              <span className={label}>PnL</span>
+              {signed(pnl)} {x.quote}
+              <span className="text-faint">
+                ({signed(x.realizedPnl)} realized · {signed(x.unrealizedPnl)} open)
+              </span>
+            </span>
+            <span className={item}>
+              <span className={label}>Volume</span>
+              {fmtUsd(Number(x.volumeQuote))}
+            </span>
+            <span className={item}>
+              <span className={label}>Books</span>
+              {x.quoting}/{x.books} quoting · {x.orders} orders
+            </span>
+            <span className={item} title="New, modify and cancel requests sent">
+              <span className={label}>Requests</span>
+              {x.stats.creates} new · <span className="text-info">{x.stats.modifies} modify</span> · {x.stats.cancels} cancel
+            </span>
+            <span className={item}>
+              <span className={label}>Fills</span>
+              <span className="text-buy">{x.stats.fills}</span>
+              <span className="text-faint">· {x.stats.takeFills} from takes</span>
+              {x.stats.rejects > 0 && <span className="text-sell">· {x.stats.rejects} rejects</span>}
+            </span>
+          </span>
+        );
+      })}
+      {t.trades > 0 && (
+        <span className={item} title="Notional-weighted edge at fill, and what was left of it at each mark-out">
+          <span className={label}>Edge</span>
+          {bps(t.edgeBps)} at fill
+          {t.horizonsSecs.map((h, i) => (
+            <span key={h}>
+              · {bps(t.markouts[i])} at +{h}s
+            </span>
+          ))}
+          <span className="text-faint">bps</span>
+        </span>
+      )}
+    </section>
+  );
+}
+
+// ---------- take proximity ----------
+
+function TakingCard({ s }: { s: QuoterStatus }) {
+  const v = s.taking;
+  return (
+    <section className="rounded-md border border-line bg-panel px-3 py-2">
+      <h2 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted">Taking</h2>
+      {!v ? (
+        <div className="text-xs text-faint">waiting for a price</div>
+      ) : (
+        <div className="space-y-2">
+          <TakeSideRow t={v.sell} base={s.market.baseSymbol} />
+          <TakeSideRow t={v.buy} base={s.market.baseSymbol} />
+        </div>
+      )}
+    </section>
+  );
+}
+
+// One side: where a take would cross, how much of the edge it needs is on offer now (the bar), and
+// what's in the way.
+function TakeSideRow({ t, base }: { t: QuoterTakeSide; base: string }) {
+  const edge = t.edgeBps;
+  const need = t.thresholdBps;
+  const away = edge === null ? null : need - edge;
+  const fill = edge === null ? 0 : need <= 0 ? (edge >= need ? 1 : 0) : Math.max(0, Math.min(1, edge / need));
+  const ready = !t.blocker;
+  const valueUsd = t.price ? Number(t.qty) * Number(t.price) : 0;
+  return (
+    <div className="num text-xs">
+      <div className="flex items-baseline gap-2">
+        <span className="text-muted">{t.side === "SELL" ? "Hit the bid" : "Take the ask"}</span>
+        <span className={cx("text-[10px]", t.enabled ? "text-faint" : "text-faint line-through")} title={t.enabled ? undefined : "off"}>
+          {t.kind}
+        </span>
+        <span className="ml-auto" title={t.price ? `${t.qty} ${base} shown by others` : undefined}>
+          {t.price ? (
+            <>
+              {fmtPrice(t.price)} <span className="text-faint">{fmtUsd(valueUsd)}</span>
+            </>
+          ) : (
+            <span className="text-faint">empty</span>
+          )}
+        </span>
+      </div>
+      <div className="mt-1 flex items-center gap-2">
+        <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-raised" title={`edge ${edge?.toFixed(1) ?? "—"} of ${need.toFixed(1)} bps needed`}>
+          <span className={cx("block h-full rounded-full", ready ? "bg-buy" : fill >= 1 ? "bg-accent" : "bg-info")} style={{ width: `${fill * 100}%` }} />
+        </span>
+        <span className="text-[11px]">
+          {bps(edge)} <span className="text-faint">/ {need.toFixed(1)} bps</span>
+        </span>
+      </div>
+      <div className={cx("mt-0.5 text-[11px]", ready ? "text-buy" : "text-faint")}>
+        {ready ? `would take ${fmtQty(t.size)} ${base}` : t.blocker === "no edge" && away !== null ? `${away.toFixed(1)} bps away` : t.blocker}
+      </div>
+    </div>
+  );
+}
+
+// ---------- trades ----------
+
+function TradesView() {
+  const { data: session } = useSession();
+  const q = useQuoterTrades(!!session?.quoter);
+  const r = q.data;
+  if (!r) return <Empty>{q.error ? q.error.message : "Loading trades…"}</Empty>;
+  const th = "px-2 py-1.5 font-medium text-right";
+  const thL = "px-2 py-1.5 font-medium text-left";
+  const hz = r.horizonsSecs;
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-2">
+      <Panel title="Edge retention by book">
+        <div className="overflow-x-auto">
+          <table className="num w-full text-xs">
+            <thead className="text-[11px] text-muted">
+              <tr className="border-b border-line">
+                <th className={thL}>Book</th>
+                <th className={th}>Trades</th>
+                <th className={th}>Notional</th>
+                <th className={th} title="Notional-weighted, in bps in our favor">
+                  Edge at fill
+                </th>
+                {hz.map((h) => (
+                  <th key={h} className={th} title={`Mark-out ${h}s after each fill, notional-weighted, bps`}>
+                    +{h}s
+                  </th>
+                ))}
+                {hz.map((h) => (
+                  <th key={`r${h}`} className={th} title={`Mark-out at +${h}s over edge at fill: 100% kept it all`}>
+                    Kept +{h}s
+                  </th>
+                ))}
+                <th className={th} title={`Mark-out at +${hz[hz.length - 1]}s in dollars, summed`}>
+                  PnL +{hz[hz.length - 1]}s
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...r.byBook, r.total].map((b) => (
+                <SummaryRow key={b.symbol || "total"} b={b} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <Help>
+          <p className="border-t border-line px-3 py-2 text-[11px] leading-relaxed text-faint">
+            Edge at fill is how far each fill was from fair value (the reference mid) in your favor. The mark-outs measure the same thing {hz.join(" and ")}{" "}
+            seconds later. A maker gets filled exactly when the market moves through its quote, so the mid often keeps going: a fill that looked good can mark
+            out at a loss. Kept is the mark-out over the edge at fill. 100% means the edge held, below 0 means the market took it all and more. That loss is
+            adverse selection, and it's what your spread has to pay for. Kept for this run only.
+          </p>
+        </Help>
+      </Panel>
+      <Panel title={`Trades (${r.total.trades})`} className="min-h-0 flex-1">
+        <div className="h-full overflow-auto">
+          <table className="num w-full text-xs">
+            <thead className="sticky top-0 bg-panel text-[11px] text-muted">
+              <tr className="border-b border-line">
+                <th className={thL}>Time</th>
+                <th className={thL}>Book</th>
+                <th className={thL}>Side</th>
+                <th className={thL}>Kind</th>
+                <th className={th}>Qty</th>
+                <th className={th}>Price</th>
+                <th className={th}>Notional</th>
+                <th className={th}>Fair</th>
+                <th className={th}>Edge</th>
+                {hz.map((h) => (
+                  <th key={h} className={th}>
+                    +{h}s
+                  </th>
+                ))}
+                <th className={th}>Kept</th>
+              </tr>
+            </thead>
+            <tbody>
+              {r.trades.map((t) => {
+                const last = t.markouts[t.markouts.length - 1];
+                const kept = last !== null && last !== undefined && t.edgeBps > 0 ? last / t.edgeBps : null;
+                return (
+                  <tr key={t.id} className="border-b border-line/60">
+                    <td className="px-2 py-1 text-faint">{new Date(t.time).toLocaleTimeString()}</td>
+                    <td className="px-2 py-1">{t.symbol}</td>
+                    <td className={cx("px-2 py-1", t.side === "BUY" ? "text-buy" : "text-sell")}>{t.side}</td>
+                    <td className={cx("px-2 py-1", t.kind === "maker" ? "text-muted" : "text-accent")}>{t.kind === "maker" ? `maker L${t.level}` : t.kind}</td>
+                    <td className="px-2 py-1 text-right">{fmtQty(t.qty)}</td>
+                    <td className="px-2 py-1 text-right">{fmtPrice(t.price)}</td>
+                    <td className="px-2 py-1 text-right">{fmtUsd(Number(t.notional))}</td>
+                    <td className="px-2 py-1 text-right text-faint">{fmtPrice(t.refMid)}</td>
+                    <td className="px-2 py-1 text-right">{bps(t.edgeBps)}</td>
+                    {t.markouts.map((m, i) => (
+                      <td key={i} className="px-2 py-1 text-right">
+                        {m === null ? (
+                          <span className="text-faint" title={`due ${hz[i]}s after the fill`}>
+                            …
+                          </span>
+                        ) : (
+                          bps(m)
+                        )}
+                      </td>
+                    ))}
+                    <td className="px-2 py-1 text-right">{pct(kept)}</td>
+                  </tr>
+                );
+              })}
+              {r.trades.length === 0 && (
+                <tr>
+                  <td colSpan={10 + hz.length}>
+                    <Empty>No fills yet this run</Empty>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function SummaryRow({ b }: { b: QuoterTradeSummary }) {
+  const td = "px-2 py-1.5 text-right";
+  const last = b.markedPnl[b.markedPnl.length - 1];
+  return (
+    <tr className={cx("border-b border-line/60", !b.symbol && "font-semibold")}>
+      <td className="px-2 py-1.5">{b.symbol || "All books"}</td>
+      <td
+        className={td}
+        title={Object.entries(b.byKind)
+          .map(([k, n]) => `${n} ${k}`)
+          .join(", ")}
+      >
+        {b.trades}
+      </td>
+      <td className={td}>{fmtUsd(Number(b.notional))}</td>
+      <td className={td}>{bps(b.edgeBps)}</td>
+      {b.markouts.map((m, i) => (
+        <td key={i} className={td} title={`${b.marked[i]} of ${b.trades} trades marked`}>
+          {bps(m)}
+        </td>
+      ))}
+      {b.retention.map((r, i) => (
+        <td key={`r${i}`} className={td}>
+          {pct(r)}
+        </td>
+      ))}
+      <td className={td}>{last === null || last === undefined ? <span className="text-faint">—</span> : signed(last)}</td>
+    </tr>
   );
 }
