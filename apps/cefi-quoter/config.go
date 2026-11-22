@@ -22,6 +22,7 @@ type Config struct {
 	ClientID       string // optional; read from the token otherwise
 	OrganizationID string // optional; organization keys only
 	BooksFile      string // which books to quote and their settings; the management API keeps it
+	StateFile      string // position, PnL, activity and trades, carried across restarts
 	AutoStart      bool   // start every saved book immediately instead of waiting for "start"
 	IDPrefix       string
 
@@ -156,6 +157,12 @@ func loadConfig() (Config, error) {
 		errs = append(errs, "PAPER_BALANCES needs a USDC balance: every paper book is priced in USDC")
 	}
 	c.PaperBalances = pb
+	// One state file per environment, so switching TM_ENV (or paper and live) never mixes them.
+	stateEnv := c.Environment
+	if c.Mode == "paper" {
+		stateEnv = "paper"
+	}
+	c.StateFile = get("QUOTER_STATE_FILE", "state."+stateEnv+".json")
 
 	c.FIX = FIXConfig{
 		Addr:               get("FIX_ADDR", ""),

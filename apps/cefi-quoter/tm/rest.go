@@ -214,13 +214,18 @@ type page[T any] struct {
 // all reads every page of a list. Lists default to 10 rows; size goes up to 100, and the next
 // page is asked for by passing pagination.next_cursor back as timestamp.
 func all[T any](ctx context.Context, c *REST, path string, query url.Values) ([]T, error) {
+	return pages[T](ctx, c, path, query, 50)
+}
+
+// pages reads up to max pages of a list, newest first.
+func pages[T any](ctx context.Context, c *REST, path string, query url.Values, max int) ([]T, error) {
 	if query == nil {
 		query = url.Values{}
 	}
 	query.Set("size", "100")
 	var out []T
 	cursor := ""
-	for i := 0; i < 50; i++ {
+	for i := 0; i < max; i++ {
 		if cursor != "" {
 			query.Set("timestamp", cursor)
 		}
@@ -337,6 +342,13 @@ func nonZero(s string) bool {
 
 func (c *REST) ActiveOrders(ctx context.Context) ([]RestOrder, error) {
 	return all[RestOrder](ctx, c, "/orders/active", nil)
+}
+
+// RecentOrders is the account's latest orders, newest first, finished ones included, up to
+// about 2,000. After a crash it says how much of each order we had resting filled while the
+// quoter was down.
+func (c *REST) RecentOrders(ctx context.Context) ([]RestOrder, error) {
+	return pages[RestOrder](ctx, c, "/orders", nil, 20)
 }
 
 // NewOrder is the body of POST /orders.

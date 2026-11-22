@@ -22,7 +22,7 @@ One quoter runs every book, all on one shared view of the account's balances. Th
 | **Book bar** | Quoting, waiting (with the reason, e.g. "reference feed silent") or stopped, and the book's reference | Start quoting (production asks first), Stop and pull quotes, Remove a stopped book with nothing resting |
 | **Prices** | The reference price and its age, the mid after inventory skew, the exchange's best bid and ask | |
 | **Reference sources** | Each source in the book's blend: its price lined up by its multiplier, its share of the price, and any that's left out or looks like a split or multiplier | **Edit…** changes sources, weights and multipliers, previewing each change against live prices before it's saved |
-| **Position** | The change in holdings since the quoter started (bought minus sold) against the max position change, average cost, realized and unrealized PnL, volume | |
+| **Position** | The change in holdings (bought minus sold) since the date shown, against the max position change, average cost, realized and unrealized PnL, volume. Carried across quoter restarts | **Reset** starts the position, PnL and counts from zero |
 | **Taking** | Each side: the price a take would cross to and its size, the edge on offer against the edge needed (as a bar), and what's in the way: off, no edge (and how many bps away), below cost, too small, no funds, cool-down | |
 | **Budget** | What this book's bids and asks hold, out of what they may hold, and the shared free balance | |
 | **Activity** | Creates, modifies and cancels sent, fills, rejects, takes (IOCs crossing the spread) sent and filled, and how many order changes were modifies | |

@@ -64,7 +64,10 @@ type DeskConfig struct {
 	OnReference func(symbol string, t reference.Tick)
 	// Save stores the books after any change, so they come back on the next start. Optional.
 	Save func(map[string]BookConfig) error
-	Log  *slog.Logger
+	// SaveState stores position, PnL, activity and the trade journal, so a restart picks up where
+	// this run left off (see state.go). Optional.
+	SaveState func(State) error
+	Log       *slog.Logger
 }
 
 // Desk runs every book in the process. It owns what the books share: one Ledger (so two books
@@ -86,6 +89,8 @@ type Desk struct {
 	conns        map[string]*ConnState
 	latest       map[string]reference.Tick // every reference source's last tick
 	checked      map[string]time.Time      // sources found to exist, and when
+	saved        *State                    // the last run's state, for books still to be added
+	lastState    []byte                    // the state last written, to skip unchanged writes
 }
 
 type deskBook struct {
@@ -95,6 +100,8 @@ type deskBook struct {
 	// flagged is each source's last state worth an event (out of line, or a suspected corporate
 	// action), so the events log one line per change rather than one per tick.
 	flagged map[string]string
+	// resting is what the last run left resting on this book, until RecoverMissedFills checks it.
+	resting []OrderState
 	cancel  context.CancelFunc
 	done    chan struct{}
 }
@@ -175,6 +182,7 @@ func (d *Desk) Add(ctx context.Context, symbol string, blend *reference.BlendCon
 	}
 	d.ledger.Register(book, l.BaseAssetID, l.QuoteAssetID)
 	db := &deskBook{engine: e, blend: cfg, flagged: map[string]string{}}
+	d.restoreBookLocked(db, symbol)
 	d.books[symbol] = db
 	d.byInstrument[l.InstrumentID] = e
 	for name, c := range d.conns {
@@ -470,8 +478,13 @@ func (d *Desk) Run(ctx context.Context) {
 
 	tick := time.NewTicker(250 * time.Millisecond)
 	defer tick.Stop()
+	lastSave := time.Now()
 	for {
 		d.maybeReadBalances(ctx)
+		if time.Since(lastSave) >= stateEvery {
+			d.SaveState(false)
+			lastSave = time.Now()
+		}
 		select {
 		case <-ctx.Done():
 			return

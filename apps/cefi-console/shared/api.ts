@@ -367,7 +367,9 @@ export interface QuoterStatus {
   bestAsk: string | null;
   mid: string | null;
   skewBps: number;
-  position: { qty: string; avgCost: string; realizedPnl: string; unrealizedPnl: string; volumeBase: string; volumeQuote: string };
+  // Since is when the position started counting (the book's first start, or its last reset); it
+  // carries across quoter restarts.
+  position: { qty: string; avgCost: string; realizedPnl: string; unrealizedPnl: string; volumeBase: string; volumeQuote: string; since: string };
   // Free is shared by every book on the asset; budget and held are this book's.
   balances: { freeBase: string; freeQuote: string; budgetBase: string; budgetQuote: string; heldBase: string; heldQuote: string; readAt: string | null };
   orders: QuoterOrder[];

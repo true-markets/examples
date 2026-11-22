@@ -28,6 +28,10 @@ var MarkoutHorizons = []time.Duration{30 * time.Second, 300 * time.Second}
 
 const journalSize = 5000
 
+// markGrace is how late a mark-out may be taken. Later than this (the quoter was down when it came
+// due) the price then is gone, and the mark-out stays empty.
+const markGrace = 30 * time.Second
+
 // Trade is one fill.
 type Trade struct {
 	ID       int             `json:"id"`
@@ -42,8 +46,15 @@ type Trade struct {
 	Notional decimal.Decimal `json:"notional"`
 	RefMid   decimal.Decimal `json:"refMid"`  // fair value when it filled
 	EdgeBps  float64         `json:"edgeBps"` // in our favor; negative for a fill worse than fair
-	// Mark-outs at each horizon (30s, 300s), in bps in our favor; nil until that time has passed.
+	// Mark-outs at each horizon (30s, 300s), in bps in our favor; nil until that time has passed,
+	// or for good if the quoter was down when it came due.
 	Markouts []*float64 `json:"markouts"`
+	// Recovered: filled while the quoter was down, found on the next start. There was no fair
+	// value to measure it against, so it's left out of the edge and mark-out averages.
+	Recovered bool `json:"recovered,omitempty"`
+	// resumed is when this run restored the trade: a mark-out that came due before then was
+	// missed, however recently.
+	resumed time.Time
 }
 
 // Journal is the desk's trade log, shared by every book.
@@ -94,6 +105,65 @@ func (j *Journal) Add(m Market, f Fill, refMid decimal.Decimal) {
 	j.pending[m.Symbol] = append(j.pending[m.Symbol], t)
 }
 
+// AddRecovered records a fill found after a restart: no fair value at the time, no mark-outs.
+func (j *Journal) AddRecovered(m Market, f Fill) {
+	kind := "maker"
+	if f.Level == TakeLevel {
+		kind = string(f.TakeKind)
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.nextID++
+	j.trades = append(j.trades, &Trade{
+		ID: j.nextID, Time: f.Time, Symbol: m.Symbol, Quote: m.QuoteSymbol, Side: f.Side, Kind: kind, Level: f.Level,
+		Qty: f.Qty, Price: f.Price, Notional: f.Qty.Mul(f.Price), Markouts: make([]*float64, len(MarkoutHorizons)), Recovered: true,
+	})
+	if len(j.trades) > journalSize {
+		j.trades = j.trades[len(j.trades)-journalSize:]
+	}
+}
+
+// Snapshot copies the journal for the state file.
+func (j *Journal) Snapshot() JournalState {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	out := JournalState{NextID: j.nextID, Trades: make([]Trade, len(j.trades))}
+	for i, t := range j.trades {
+		out.Trades[i] = *t
+		out.Trades[i].Markouts = append([]*float64(nil), t.Markouts...)
+	}
+	return out
+}
+
+// Restore loads a saved journal. A mark-out still to come is marked as usual; one that came due
+// while the quoter was down stays empty, since the price at that moment is gone.
+func (j *Journal) Restore(s JournalState, now time.Time) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.trades, j.pending = nil, map[string][]*Trade{}
+	j.nextID = s.NextID
+	for i := range s.Trades {
+		t := s.Trades[i]
+		if len(t.Markouts) != len(MarkoutHorizons) {
+			t.Markouts = make([]*float64, len(MarkoutHorizons))
+		}
+		t.resumed = now
+		j.trades = append(j.trades, &t)
+		if t.Recovered {
+			continue
+		}
+		for k, h := range MarkoutHorizons {
+			if t.Markouts[k] == nil && t.Time.Add(h).After(now) {
+				j.pending[t.Symbol] = append(j.pending[t.Symbol], &t)
+				break
+			}
+		}
+		if t.ID > j.nextID {
+			j.nextID = t.ID
+		}
+	}
+}
+
 // Mark fills in the mark-outs that are due for symbol's trades, at the reference mid now.
 func (j *Journal) Mark(symbol string, mid decimal.Decimal, now time.Time) {
 	j.mu.Lock()
@@ -109,11 +179,14 @@ func (j *Journal) Mark(symbol string, mid decimal.Decimal, now time.Time) {
 			if t.Markouts[i] != nil {
 				continue
 			}
-			if now.Sub(t.Time) >= h {
+			switch age := now.Sub(t.Time); {
+			case age < h:
+				done = false
+			case age < h+markGrace && !t.Time.Add(h).Before(t.resumed):
 				v := favor(t.Side, t.Price, mid)
 				t.Markouts[i] = &v
-			} else {
-				done = false
+			default:
+				// Too late: the price when it came due is gone. Left empty.
 			}
 		}
 		if !done {
@@ -181,6 +254,9 @@ func summarize(symbol string, trades []*Trade, horizons []int) TradeSummary {
 	for _, t := range trades {
 		s.ByKind[t.Kind]++
 		s.Notional = s.Notional.Add(t.Notional)
+		if t.Recovered {
+			continue // no fair value to measure it against
+		}
 		notional := t.Notional.InexactFloat64()
 		edgeW += t.EdgeBps * notional
 		w += notional

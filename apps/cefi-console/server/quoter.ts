@@ -56,6 +56,11 @@ export class QuoterClient {
     return this.call("PATCH", `/api/books/${encodeURIComponent(symbol)}/params`, patch);
   }
 
+  // Start a book's position, PnL and activity counts from zero.
+  resetPosition(symbol: string): Promise<unknown> {
+    return this.call("POST", `/api/books/${encodeURIComponent(symbol)}/reset`);
+  }
+
   // Start or stop one book, or every book when symbol is left out.
   control(action: "start" | "stop", symbol?: string): Promise<unknown> {
     return this.call("POST", symbol ? `/api/books/${encodeURIComponent(symbol)}/${action}` : `/api/${action}`);

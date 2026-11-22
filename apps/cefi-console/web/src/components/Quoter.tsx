@@ -22,6 +22,7 @@ import {
   useQuoterStatus,
   useRemoveQuoterBook,
   useSession,
+  useResetQuoterPosition,
   useSetQuoterReference,
   useUpdateQuoterParams,
 } from "../api.ts";
@@ -598,10 +599,13 @@ function ControlBar({ s, live }: { s: QuoterStatus; live: boolean }) {
 
 // ---------- cards ----------
 
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
+function Card({ title, children, action }: { title: ReactNode; children: React.ReactNode; action?: ReactNode }) {
   return (
     <section className="rounded-md border border-line bg-panel px-3 py-2">
-      <h2 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted">{title}</h2>
+      <h2 className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
+        {title}
+        {action && <span className="ml-auto normal-case tracking-normal">{action}</span>}
+      </h2>
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">{children}</dl>
     </section>
   );
@@ -647,9 +651,51 @@ function PositionCard({ s }: { s: QuoterStatus }) {
   const base = s.market.baseSymbol;
   const quote = s.market.quoteSymbol;
   const max = Number(s.params.maxPosition ?? 0);
+  const reset = useResetQuoterPosition();
+  const [confirm, setConfirm] = useState(false);
+  const since = new Date(p.since);
   return (
-    <Card title="Position (since start)">
-      <Row label="Change" title="Bought minus sold since the quoter started, against the max position change">
+    <Card
+      title={
+        <span title="Carried across quoter restarts, in the state file">
+          Position{" "}
+          <span className="normal-case tracking-normal text-faint">
+            since {since.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+          </span>
+        </span>
+      }
+      action={
+        <Button size="xs" tone="ghost" onClick={() => setConfirm(true)} title="Start this book's position, PnL, volume and counts from zero">
+          <RotateCcw size={12} /> Reset
+        </Button>
+      }
+    >
+      {confirm && (
+        <Modal
+          title={`Reset ${s.market.symbol}'s position?`}
+          onClose={() => setConfirm(false)}
+          footer={
+            <>
+              <Button onClick={() => setConfirm(false)}>Cancel</Button>
+              <Button
+                tone="danger"
+                onClick={() => {
+                  reset.mutate(s.market.symbol);
+                  setConfirm(false);
+                }}
+              >
+                Reset to zero
+              </Button>
+            </>
+          }
+        >
+          <p className="text-xs leading-relaxed text-muted">
+            The position ({p.qty} {base}), its average cost, realized PnL, volume and activity counts start again from zero, and the max position change is
+            measured from now. Nothing is traded and your balances don't change; the trade journal keeps its history.
+          </p>
+        </Modal>
+      )}
+      <Row label="Change" title="Bought minus sold since the date above, against the max position change">
         {signed(p.qty, 8)} {base}
         {max > 0 && (
           <span className="text-faint">
@@ -1078,7 +1124,7 @@ function TotalsBar({ d }: { d: QuoterDeskStatus }) {
         const pnl = Number(x.realizedPnl) + Number(x.unrealizedPnl);
         return (
           <span key={x.quote} className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
-            <span className={item} title="Realized plus unrealized, since start">
+            <span className={item} title="Realized plus unrealized, since each book's position started counting">
               <span className={label}>PnL</span>
               {signed(pnl)} {x.quote}
               <span className="text-faint">

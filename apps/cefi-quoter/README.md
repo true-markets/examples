@@ -228,6 +228,18 @@ Before a book sends a new order or a modify, it calls `Ledger.Reserve`. That han
 
 `maxQuoteAlloc` and `maxBaseAlloc` divide a shared asset between books. Without them, whichever book asks first can take all of it, and the Quoter screen warns when two running books share an asset and one has no allocation. `TestBooksShareOneBalance` in [quoter/engine_test.go](quoter/engine_test.go) runs two books against a fake exchange that rejects any overspend, with barely enough USDC for one ladder. It passes with no rejections, and fails when the reservation is taken out.
 
+### Restarts: the state file
+
+Each book's position, average cost, PnL, volume, activity counts and recent events carry across restarts, and so does the trade journal. They live in a state file, one per environment: `state.production.json`, `state.uat.json` or `state.paper.json` (`QUOTER_STATE_FILE` to put it elsewhere). The quoter writes it every two seconds when something changed, and once more on shutdown, in one step so a crash never leaves half a file. Settings stay in `books.json`. The state is about what happened; the books file is about what you want.
+
+- **The position counts from a point you choose.** Each book's Position card says since when: its first start, or the last time you pressed **Reset** (`POST /api/books/{symbol}/reset`). The max position change is measured from there. Reset starts the position, PnL, volume and counts from zero. It trades nothing, changes no balance, and leaves the trade journal alone.
+- **A crash doesn't lose fills.** A clean shutdown pulls every quote first, so nothing can fill while the quoter is down. A crash (or `kill -9`) can leave quotes resting, and they can keep filling until the next start cancels them. The state lists what each book had resting and how much of each order had filled. On the next start, after those orders are canceled, the quoter reads the exchange's recent order history. Whatever filled since the save goes into the position, priced at the order's last price (what a resting post-only order trades at). The log, the event feed and the trade journal mark these fills as filled while the quoter was down. They're left out of the edge averages, since there was no fair value at the time to measure them against.
+- **Mark-outs that came due while it was down stay empty.** The price at that moment is gone, and marking late would be wrong. Ones still to come are taken as usual.
+- **Paper mode carries its account too.** `state.paper.json` keeps the paper balances, so restored positions still match them. `PAPER_BALANCES` only sets the balances the first time.
+- **It belongs to one account.** A state file from another client is refused at start, rather than overwritten. Books start stopped, as always, unless `QUOTER_AUTOSTART` is on.
+
+To start everything from zero, stop the quoter and delete the state file.
+
 ### When it stops quoting
 
 The state on the Quoter screen always says why. A book pulls its quotes when you stop it, when the drop copy or market data disconnects (it would be quoting blind), when the reference feed has said nothing about its product for `REF_STALE_MS`, or when its price hasn't changed for a minute. Coinbase's ticker only publishes on trades and Hyperliquid's bbo only when the touch moves, so a quiet market's price can be seconds old while its feed is healthy; each source's per-product heartbeat is what counts as alive. It holds its quotes, without adding to them, while it waits for balances or reads its orders back after a reconnect.
@@ -245,7 +257,7 @@ Everything goes in `.env`; [.env.example](.env.example) lists all of it with com
 | `QUOTE_SIZE` | 10 | First level's size, in `SIZE_UNIT`. It has to cover at least one lot (the exchange's quantity step) and $1: on BTC near $60,000 one lot is 0.0001, about $6 |
 | `LEVEL_SIZE_MULT` | 1 | Each level out is this many times the previous size |
 | `MODIFY_THRESHOLD_BPS` | 2 | Leave an order alone until its target moves this far. Keep it under the spread |
-| `MAX_POSITION` | 100 | **Max position change**: how far a book may move your holdings from where they were when the quoter started (bought minus sold since then), long or short, in `SIZE_UNIT`. A side stops quoting at the limit. It starts from 0 on every restart. 0 turns the limit and skew off |
+| `MAX_POSITION` | 100 | **Max position change**: how far a book may move your holdings from where they were when it started counting (bought minus sold since then), long or short, in `SIZE_UNIT`. A side stops quoting at the limit. The count carries across restarts until you reset the book's position. 0 turns the limit and skew off |
 | `SKEW_BPS` | 5 | Mid shift back toward where you started, at the max position change |
 | `MAX_QUOTE_ALLOC` | 0 | Most quote this book's bids may hold (USDC, so already dollars); 0 means any free balance. Set one per book when books share a quote asset |
 | `MAX_BASE_ALLOC` | 0 | Most of the base asset this book's asks may hold, in `SIZE_UNIT`; 0 means any free balance |
@@ -262,7 +274,7 @@ Everything goes in `.env`; [.env.example](.env.example) lists all of it with com
 
 Sizes in USDC are the easy default: one set of numbers works on any book, from BTC to a $270 tokenized stock, and a $10 level stays $10 as the price moves. The exchange still sizes orders in the base asset, so each level is rounded down to the book's lot: $2.18 of GOOGLC at $272 is 0.008, which the 0.001 lot leaves as 0.007 ($1.91). Each book has its own **Sizes in** switch at the top of its parameters on the Quoter screen; flipping it converts that book's sizes at the current reference price. Books saved before this setting existed keep their sizes in the base asset.
 
-Position and PnL count each book's fills since this run started, at average cost. They start at zero on every start: the position is the change in your holdings, not the holdings themselves, and the max position change bounds it on each side.
+Position and PnL count each book's fills at average cost, from the book's first start or its last reset, across restarts ([the state file](#restarts-the-state-file)). The position is the change in your holdings, not the holdings themselves, and the max position change bounds it on each side.
 
 `books.json` (`QUOTER_BOOKS_FILE`) can also be written by hand. A setting a book leaves out comes from `.env`:
 
@@ -337,4 +349,4 @@ No test touches the network. The engine runs against a fake exchange that answer
 
 This is a Go rewrite of an internal Python market maker. The parts that make a quoter work carried over: every book in one process on one shared balance ledger, the modify-first reconcile, pre-registering requests ahead of the drop copy, clamping against our own and the exchange's orders, budget accounting that counts our own holds, FIX ClOrdID chaining, and pulling quotes when a feed goes stale.
 
-The profit taker and takeout came over too ([Taking](#taking-getting-unstuck)). Left out on purpose, because each is a strategy of its own and they obscure the core loop: the momentum taker, volatility- and imbalance-driven spreads, the trade journal and mark-outs, position recovery across restarts, multi-maker scenarios and the terminal UI. Each would plug in as another input to `BuildLadder` or another kind of `Step`.
+The profit taker and takeout came over too ([Taking](#taking-getting-unstuck)). Left out on purpose, because each is a strategy of its own and they obscure the core loop: the momentum taker, volatility- and imbalance-driven spreads, multi-maker scenarios and the terminal UI. Each would plug in as another input to `BuildLadder` or another kind of `Step`.

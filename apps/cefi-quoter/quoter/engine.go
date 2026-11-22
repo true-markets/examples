@@ -80,6 +80,7 @@ type Engine struct {
 	params      Params
 	enabled     bool
 	started     time.Time
+	since       time.Time // when the position started counting: the first start, or the last reset
 	ref         *reference.Tick
 	refProblem  string // why the blended reference has no price, if it hasn't
 	bestBid     *decimal.Decimal
@@ -141,6 +142,7 @@ func NewEngine(market Market, params Params, venue Venue, ledger *Ledger, tx Tra
 		params:   params,
 		enabled:  enabled,
 		started:  time.Now(),
+		since:    time.Now(),
 		conns:    map[string]*ConnState{},
 		cooldown: map[string]time.Time{},
 	}

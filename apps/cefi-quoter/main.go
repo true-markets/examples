@@ -75,9 +75,19 @@ func run() error {
 		log.Warn(w) // the file is rewritten without it the next time a book changes
 	}
 
+	state, err := loadState(cfg.StateFile)
+	if err != nil {
+		return err
+	}
+	// The paper account carries over too, so restored positions still match its balances.
+	if cfg.Mode == "paper" && state != nil && len(state.PaperBalances) > 0 {
+		cfg.PaperBalances = state.PaperBalances
+	}
+
 	var v *venue
+	var paperX *paper.Exchange
 	if cfg.Mode == "paper" {
-		v = paperVenue(cfg, log)
+		v, paperX = paperVenue(cfg, log)
 	} else if v, err = liveVenue(ctx, cfg, log); err != nil {
 		return err
 	}
@@ -132,8 +142,21 @@ func run() error {
 	dc.Catalog = stockReferences(ctx, catalogURL, dc.Catalog, log)
 	dc.Log = log
 	dc.Save = func(b map[string]quoter.BookConfig) error { return saveBooks(cfg.BooksFile, b) }
+	dc.SaveState = func(s quoter.State) error {
+		f := stateFile{State: s}
+		if paperX != nil {
+			f.PaperBalances = paperX.Holdings()
+		}
+		return saveState(cfg.StateFile, f)
+	}
 	dc.OnAdd = v.onAdd
 	desk = quoter.NewDesk(dc)
+	if state != nil {
+		if err := desk.Restore(&state.State); err != nil {
+			return fmt.Errorf("%w; point QUOTER_STATE_FILE somewhere else, or delete %s to start from zero", err, cfg.StateFile)
+		}
+		log.Info("picking up where the last run left off", "state", cfg.StateFile, "saved", state.SavedAt.Local().Format("Jan 2 15:04:05"))
+	}
 
 	go ticker.Run(feedCtx)
 	if err := v.start(feedCtx, desk); err != nil {
@@ -147,6 +170,14 @@ func run() error {
 			log.Error("couldn't add a saved book; fix or remove it in "+cfg.BooksFile, "book", b.Symbol, "err", err)
 		}
 	}
+
+	// Orders a crash left resting may have filled before this start canceled them.
+	if h, ok := dc.Venue.(quoter.OrderHistory); ok {
+		for _, m := range desk.RecoverMissedFills(ctx, h) {
+			log.Warn(m)
+		}
+	}
+	desk.SaveState(true)
 
 	// The management API.
 	if err := checkAdminAddr(cfg.AdminAddr, cfg.AdminToken); err != nil {
@@ -175,6 +206,7 @@ func run() error {
 	if left := desk.Shutdown(shutdownCtx, 5*time.Second); left > 0 {
 		log.Warn("some cancels were not confirmed before exit; check your open orders", "orders", left)
 	}
+	desk.SaveState(true)
 	_ = srv.Shutdown(shutdownCtx)
 	stopFeeds()
 	<-v.done
@@ -183,7 +215,7 @@ func run() error {
 
 // --- paper ----------------------------------------------------------------------------------
 
-func paperVenue(cfg Config, log *slog.Logger) *venue {
+func paperVenue(cfg Config, log *slog.Logger) (*venue, *paper.Exchange) {
 	x := paper.New("USDC", cfg.PaperBalances)
 	var parts []string
 	for asset, amt := range cfg.PaperBalances {
@@ -209,7 +241,7 @@ func paperVenue(cfg Config, log *slog.Logger) *venue {
 			d.SetConn(quoter.ConnMarket, true, "")
 			return nil
 		},
-	}
+	}, x
 }
 
 // --- live -----------------------------------------------------------------------------------

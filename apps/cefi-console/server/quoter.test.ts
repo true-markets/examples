@@ -29,6 +29,7 @@ beforeAll(async () => {
     if (req.url === "/api/books" && req.method === "POST") return res.end(JSON.stringify({ market: JSON.parse(body) }));
     if (req.url === "/api/books/BTC-USDC") return res.end(JSON.stringify({ state: "stopped", params }));
     if (req.url === "/api/books/BTC-USDC/start" || req.url === "/api/stop") return res.end(JSON.stringify({ enabled: req.url.endsWith("start") }));
+    if (req.url === "/api/books/BTC-USDC/reset" && req.method === "POST") return res.end(JSON.stringify({ reset: true }));
     if (req.url === "/api/references/BTC-USDC/suggest") return res.end(JSON.stringify({ sources: [{ ref: "BTC-USD", weight: 1 }] }));
     if (req.url === "/api/references/BTC-USDC/preview" && req.method === "POST") return res.end(JSON.stringify({ symbol: "BTC-USDC", blend: JSON.parse(body) }));
     if (req.url === "/api/books/BTC-USDC/reference" && req.method === "PUT") return res.end(JSON.stringify({ market: { blend: JSON.parse(body) } }));
@@ -79,6 +80,7 @@ describe("quoter passthrough", () => {
     expect((await req<{ blend: unknown }>("POST", "/api/quoter/references/BTC-USDC/preview", blend)).body.blend).toEqual(blend);
     expect((await req<{ market: { blend: unknown } }>("PUT", "/api/quoter/books/BTC-USDC/reference", blend)).body.market.blend).toEqual(blend);
     expect((await req("PUT", "/api/quoter/books/BTC-USDC/reference", { sources: "BTC-USD" })).status).toBe(400);
+    expect((await req<{ reset: boolean }>("POST", "/api/quoter/books/BTC-USDC/reset")).body.reset).toBe(true);
   });
 
   it("refuses a path that isn't a book symbol before calling the quoter", async () => {

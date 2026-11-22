@@ -48,6 +48,9 @@ type PositionStatus struct {
 	UnrealizedPnl decimal.Decimal `json:"unrealizedPnl"`
 	VolumeBase    decimal.Decimal `json:"volumeBase"`
 	VolumeQuote   decimal.Decimal `json:"volumeQuote"`
+	// Since is when the position started counting: the book's first start, or its last reset.
+	// It carries across restarts.
+	Since time.Time `json:"since"`
 }
 
 // BalanceStatus is this book's view of the shared balances. Free is shared by every book on the
@@ -118,7 +121,7 @@ func (e *Engine) Status() Status {
 		s.Warnings = append(s.Warnings, "the modify threshold is wider than the spread, so an order can lag its target by more than the spread and sit on the wrong side of the mid; lower modifyThresholdBps or widen spreadBps")
 	}
 	p := e.pos
-	s.Position = PositionStatus{Qty: p.qty, AvgCost: p.avgCost, RealizedPnl: p.realized, VolumeBase: p.volBase, VolumeQuote: p.volQuote}
+	s.Position = PositionStatus{Qty: p.qty, AvgCost: p.avgCost, RealizedPnl: p.realized, VolumeBase: p.volBase, VolumeQuote: p.volQuote, Since: e.since}
 	if e.ref != nil && !p.qty.IsZero() {
 		s.Position.UnrealizedPnl = e.ref.Mid.Sub(p.avgCost).Mul(p.qty)
 	}
@@ -184,7 +187,7 @@ func (e *Engine) emptySideReasonLocked(side Side, mid decimal.Decimal) string {
 			room = p.MaxPosition.Add(e.pos.qty)
 		}
 		if room.LessThan(minSize) {
-			return fmt.Sprintf("the max position change is reached (%s %s bought minus sold since start, limit ±%s %s)", e.pos.qty, base, set.MaxPosition, unit)
+			return fmt.Sprintf("the max position change is reached (%s %s bought minus sold since %s, limit ±%s %s); reset the position to count from here", e.pos.qty, base, e.since.Local().Format("Jan 2 15:04"), set.MaxPosition, unit)
 		}
 	}
 	if side == Buy && e.budgetQuote.LessThan(minSize.Mul(mid)) {

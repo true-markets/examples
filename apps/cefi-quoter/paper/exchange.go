@@ -85,6 +85,17 @@ func New(quoteAsset string, balances map[string]decimal.Decimal) *Exchange {
 	return &Exchange{QuoteAsset: quoteAsset, balances: b, orders: map[string]*order{}, last: map[string]reference.Tick{}, Latency: 20 * time.Millisecond}
 }
 
+// Holdings is every balance, for carrying the paper account across a restart.
+func (x *Exchange) Holdings() map[string]decimal.Decimal {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	out := make(map[string]decimal.Decimal, len(x.balances))
+	for k, v := range x.balances {
+		out[k] = v
+	}
+	return out
+}
+
 // InstrumentID is the made-up instrument id for a paper book.
 func InstrumentID(symbol string) string { return "paper:" + symbol }
 

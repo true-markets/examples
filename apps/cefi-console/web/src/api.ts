@@ -281,6 +281,12 @@ export const useQuoterControl = () =>
     },
   );
 
+export const useResetQuoterPosition = () =>
+  useAction((symbol: string) => call("POST", `${bookPath(symbol)}/reset`), {
+    success: (_r, symbol) => `${symbol}: position, PnL and counts reset`,
+    invalidate: ["quoter-book", "quoter-status"],
+  });
+
 export const useAddQuoterBook = () =>
   useAction((input: { symbol: string; reference?: string; blend?: QuoterBlend }) => call<{ market: { symbol: string } }>("POST", "/api/quoter/books", input), {
     success: (r) => `${r.market.symbol} added, stopped`,

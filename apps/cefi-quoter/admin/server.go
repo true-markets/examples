@@ -22,6 +22,7 @@
 //	PATCH  /api/books/{symbol}/params   a partial update, e.g. {"spreadBps": 12}
 //	POST   /api/books/{symbol}/start    start quoting one book
 //	POST   /api/books/{symbol}/stop     stop one book and pull its quotes
+//	POST   /api/books/{symbol}/reset    start its position, PnL and activity counts from zero
 //	POST   /api/start                   start every book
 //	POST   /api/stop                    stop every book and pull every quote
 //
@@ -171,6 +172,17 @@ func Handler(d *quoter.Desk, token string, log *slog.Logger) http.Handler {
 		}
 		log.Info("parameters changed over the management API", "book", r.PathValue("symbol"), "from", r.RemoteAddr)
 		writeJSON(w, http.StatusOK, map[string]any{"params": p})
+	})
+	mux.HandleFunc("POST /api/books/{symbol}/reset", func(w http.ResponseWriter, r *http.Request) {
+		if book(w, r) == nil {
+			return
+		}
+		if err := d.ResetPosition(r.PathValue("symbol")); err != nil {
+			fail(w, http.StatusBadRequest, err)
+			return
+		}
+		log.Info("position reset over the management API", "book", r.PathValue("symbol"), "from", r.RemoteAddr)
+		writeJSON(w, http.StatusOK, map[string]bool{"reset": true})
 	})
 	for action, on := range map[string]bool{"start": true, "stop": false} {
 		mux.HandleFunc("POST /api/books/{symbol}/"+action, func(w http.ResponseWriter, r *http.Request) {
