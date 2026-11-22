@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, CircleAlert, CircleHelp, Play, Plus, RotateCcw, SlidersHorizontal, Square, Trash2 } from "lucide-react";
+import { ChartColumn, ChevronDown, ChevronUp, CircleAlert, CircleHelp, Play, Plus, RotateCcw, SlidersHorizontal, Square, Trash2 } from "lucide-react";
 import { createContext, Fragment, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Panel as Pane } from "react-resizable-panels";
 import { Divider, pane, Split } from "./Layout.tsx";
@@ -51,7 +51,7 @@ export function QuoterScreen() {
   const { symbol: shared, setSymbol } = useUi();
   const [picked, setPicked] = useState<string>();
   const [help, setHelp] = useHelpSetting();
-  const [tab, setTab] = useStoredChoice<"books" | "trades">("cefi-console:quoter-tab", "books", ["books", "trades"]);
+  const [edge, setEdge] = useStoredChoice<"open" | "closed">("cefi-console:quoter-edge", "closed", ["open", "closed"]);
   const [bulk, setBulk] = useStoredChoice<"open" | "closed">("cefi-console:quoter-bulk", "closed", ["open", "closed"]);
   const books = desk?.books ?? [];
   const has = (s: string | undefined) => !!s && books.some((b) => b.market.symbol === s);
@@ -87,44 +87,47 @@ export function QuoterScreen() {
   return (
     <ShowHelp.Provider value={help}>
       <div className="flex h-full min-h-0 flex-col gap-2">
-        <DeskBar d={desk} stale={!!status.error} help={help} onHelp={setHelp} tab={tab} onTab={setTab} />
-        <TotalsBar d={desk} bulk={bulk === "open"} onBulk={(open) => setBulk(open ? "open" : "closed")} />
+        <DeskBar d={desk} stale={!!status.error} help={help} onHelp={setHelp} />
+        <AllBooksBar d={desk} open={edge === "open"} onToggle={(open) => setEdge(open ? "open" : "closed")} />
+        {/* Every book's edge and every trade, opened from the All books bar. */}
+        {edge === "open" && desk.books.length > 0 && (
+          <div className="h-[45vh] shrink-0">
+            <TradesView />
+          </div>
+        )}
+        <ActivityBar d={desk} open={bulk === "open"} onToggle={(open) => setBulk(open ? "open" : "closed")} />
         {bulk === "open" && desk.books.length > 0 && <BulkParams d={desk} />}
         <Warnings list={desk.warnings} />
         <div className="min-h-0 flex-1">
-          {tab === "trades" ? (
-            <TradesView />
-          ) : (
-            <Split id="quoter" orientation="horizontal">
-              <Pane id="quoter-left" defaultSize="28" minSize={300}>
-                <Split id="quoter-left" orientation="vertical">
-                  <Pane id="quoter-books" defaultSize="55" minSize={120}>
-                    <div className={pane}>
-                      <BooksPanel d={desk} selected={selected} onSelect={select} />
-                    </div>
-                  </Pane>
-                  <Divider vertical />
-                  <Pane id="quoter-balances" defaultSize="45" minSize={100}>
-                    <div className={pane}>
-                      <SharedBalancesPanel d={desk} />
-                    </div>
-                  </Pane>
-                </Split>
-              </Pane>
-              <Divider />
-              <Pane id="quoter-book" defaultSize="72" minSize="40">
-                <div className={pane}>
-                  {selected ? (
-                    <BookView key={selected} symbol={selected} live={desk.environment === "production"} paper={desk.mode === "paper"} />
-                  ) : (
-                    <Panel title="No books yet" className="h-full">
-                      <Empty>Add a book on the left. It starts stopped, with a preview of what it would quote, until you start it.</Empty>
-                    </Panel>
-                  )}
-                </div>
-              </Pane>
-            </Split>
-          )}
+          <Split id="quoter" orientation="horizontal">
+            <Pane id="quoter-left" defaultSize="28" minSize={300}>
+              <Split id="quoter-left" orientation="vertical">
+                <Pane id="quoter-books" defaultSize="55" minSize={120}>
+                  <div className={pane}>
+                    <BooksPanel d={desk} selected={selected} onSelect={select} />
+                  </div>
+                </Pane>
+                <Divider vertical />
+                <Pane id="quoter-balances" defaultSize="45" minSize={100}>
+                  <div className={pane}>
+                    <SharedBalancesPanel d={desk} />
+                  </div>
+                </Pane>
+              </Split>
+            </Pane>
+            <Divider />
+            <Pane id="quoter-book" defaultSize="72" minSize="40">
+              <div className={pane}>
+                {selected ? (
+                  <BookView key={selected} symbol={selected} live={desk.environment === "production"} paper={desk.mode === "paper"} />
+                ) : (
+                  <Panel title="No books yet" className="h-full">
+                    <Empty>Add a book on the left. It starts stopped, with a preview of what it would quote, until you start it.</Empty>
+                  </Panel>
+                )}
+              </div>
+            </Pane>
+          </Split>
         </div>
       </div>
     </ShowHelp.Provider>
@@ -215,21 +218,7 @@ function StateBadge({ state }: { state: QuoterStatus["state"] }) {
 
 // ---------- the whole quoter ----------
 
-function DeskBar({
-  d,
-  stale,
-  help,
-  onHelp,
-  tab,
-  onTab,
-}: {
-  d: QuoterDeskStatus;
-  stale: boolean;
-  help: boolean;
-  onHelp: (on: boolean) => void;
-  tab: "books" | "trades";
-  onTab: (t: "books" | "trades") => void;
-}) {
+function DeskBar({ d, stale, help, onHelp }: { d: QuoterDeskStatus; stale: boolean; help: boolean; onHelp: (on: boolean) => void }) {
   const control = useQuoterControl();
   const [confirm, setConfirm] = useState(false);
   const live = d.environment === "production";
@@ -243,20 +232,6 @@ function DeskBar({
   return (
     <section className="flex flex-wrap items-center gap-3 rounded-md border border-line bg-panel px-3 py-2">
       <span className="text-sm font-semibold">Quoter</span>
-      <div className="flex rounded border border-line p-0.5" role="tablist" aria-label="Quoter view">
-        {(["books", "trades"] as const).map((t) => (
-          <button
-            key={t}
-            type="button"
-            role="tab"
-            aria-selected={tab === t}
-            onClick={() => onTab(t)}
-            className={cx("rounded px-2 py-0.5 text-[11px] font-semibold", tab === t ? "bg-raised text-ink" : "text-muted hover:text-ink")}
-          >
-            {t === "books" ? "Books" : `Trades${d.trades.trades ? ` (${d.trades.trades})` : ""}`}
-          </button>
-        ))}
-      </div>
       <span
         className={cx(
           "rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wider",
@@ -997,7 +972,11 @@ function LadderPanel({ s }: { s: QuoterStatus }) {
   }));
   const th = "px-2 py-1.5 font-medium";
   return (
-    <Panel className="h-full" title={s.enabled ? "Ladder" : "Ladder (preview: what it would quote)"} center={<LadderSpread s={s} />}>
+    <Panel
+      className="h-full"
+      title={s.enabled ? "Ladder" : <span title="Stopped: what it would quote once started">Ladder · preview</span>}
+      center={<LadderSpread s={s} />}
+    >
       <div className="h-full overflow-auto">
         <div className="overflow-x-auto">
           <table className="num w-full text-xs">
@@ -1330,8 +1309,39 @@ function EventsPanel({ s }: { s: QuoterStatus }) {
     info: "text-muted",
   };
   const events = [...s.events].reverse().slice(0, 100);
+  const { data: session } = useSession();
+  const [tab, setTab] = useStoredChoice<"events" | "trades">("cefi-console:quoter-book-pane", "events", ["events", "trades"]);
+  const trades = useQuoterTrades(!!session?.quoter);
+  const mine = useMemo(() => (trades.data?.trades ?? []).filter((t) => t.symbol === s.market.symbol), [trades.data, s.market.symbol]);
+  const count = mine.length;
+  const tabs = (
+    <span role="tablist" className="-ml-1.5 flex gap-0.5">
+      {(["events", "trades"] as const).map((t) => (
+        <button
+          key={t}
+          type="button"
+          role="tab"
+          aria-selected={tab === t}
+          onClick={() => setTab(t)}
+          className={cx("rounded px-1.5 py-0.5 uppercase tracking-wider", tab === t ? "bg-raised text-ink" : "text-faint hover:text-ink")}
+        >
+          {t === "events" ? "Events" : `${s.market.baseSymbol} trades${count ? ` (${count})` : ""}`}
+        </button>
+      ))}
+    </span>
+  );
+  if (tab === "trades")
+    return (
+      <Panel title={tabs} className="h-full">
+        {trades.data ? (
+          <TradesTable id="quoter-book-trades" trades={mine} hz={trades.data.horizonsSecs} />
+        ) : (
+          <Empty>{trades.error ? trades.error.message : "Loading trades…"}</Empty>
+        )}
+      </Panel>
+    );
   return (
-    <Panel title="Events" className="h-full">
+    <Panel title={tabs} className="h-full">
       <div className="h-full overflow-y-auto px-3 py-1.5">
         {events.length === 0 && <Empty>No events yet</Empty>}
         {events.map((e, i) => (
@@ -1358,99 +1368,144 @@ function pct(v: number | null | undefined) {
   return <span className={v >= 0.5 ? "text-buy" : v < 0 ? "text-sell" : "text-accent"}>{Math.round(v * 100)}%</span>;
 }
 
-function TotalsBar({ d, bulk, onBulk }: { d: QuoterDeskStatus; bulk: boolean; onBulk: (open: boolean) => void }) {
+const barLabel = "text-[10px] font-semibold uppercase tracking-wider text-muted";
+const barItem = "flex items-baseline gap-1.5";
+
+// A summary bar: a name, its figures on one baseline, and a button on the right that opens what
+// sits under it. The button never makes the bar taller.
+function SummaryBar({ name, children, button }: { name: string; children: ReactNode; button: ReactNode }) {
+  return (
+    <section className="num flex items-center gap-3 rounded-md border border-line bg-panel px-3 py-1.5 text-xs">
+      <span className={cx(barLabel, "w-[4.5rem] shrink-0")}>{name}</span>
+      <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-6 gap-y-1">{children}</div>
+      {button}
+    </section>
+  );
+}
+
+function OpenButton({
+  open,
+  onToggle,
+  icon,
+  label,
+  title,
+}: {
+  open: boolean;
+  onToggle: (open: boolean) => void;
+  icon: ReactNode;
+  label: string;
+  title: string;
+}) {
+  return (
+    <Button size="xs" tone="ghost" className="-my-1 shrink-0" aria-expanded={open} onClick={() => onToggle(!open)} title={title}>
+      {icon} {label} {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+    </Button>
+  );
+}
+
+// Results across every book; opens every book's edge and every trade.
+function AllBooksBar({ d, open, onToggle }: { d: QuoterDeskStatus; open: boolean; onToggle: (open: boolean) => void }) {
   if (!d.books.length) return null;
   const t = d.trades;
-  const item = "flex items-baseline gap-1.5";
-  const label = "text-[10px] font-semibold uppercase tracking-wider text-muted";
-  const row = "flex min-w-0 flex-wrap items-baseline gap-x-6 gap-y-1";
-  // Two rows: results on top (PnL, volume, books, edge), activity underneath (requests, fills, maker
-  // share). The row names share a column so the figures line up.
   return (
-    <section className="num grid grid-cols-[auto_minmax(0,1fr)_auto] items-baseline gap-x-4 gap-y-1 rounded-md border border-line bg-panel px-3 py-1.5 text-xs">
-      <span className={label}>All books</span>
-      <div className={row}>
-        {d.totals.map((x) => {
-          const pnl = Number(x.realizedPnl) + Number(x.unrealizedPnl);
-          return (
-            <Fragment key={x.quote}>
-              <span className={item} title="Realized plus unrealized, since each book's position started counting">
-                <span className={label}>PnL</span>
-                {signed(pnl)} {quoteUnit(x.quote)}
-                <span className="text-faint">
-                  ({signed(x.realizedPnl)} realized · {signed(x.unrealizedPnl)} open)
-                </span>
+    <SummaryBar
+      name="All books"
+      button={
+        <OpenButton
+          open={open}
+          onToggle={onToggle}
+          icon={<ChartColumn size={12} />}
+          label={`Edge and trades${t.trades ? ` (${t.trades})` : ""}`}
+          title={open ? "Close edge by book and trades" : "Edge retention by book, and every trade across the books"}
+        />
+      }
+    >
+      {d.totals.map((x) => {
+        const pnl = Number(x.realizedPnl) + Number(x.unrealizedPnl);
+        return (
+          <Fragment key={x.quote}>
+            <span className={barItem} title="Realized plus unrealized, since each book's position started counting">
+              <span className={barLabel}>PnL</span>
+              {signed(pnl)} {quoteUnit(x.quote)}
+              <span className="text-faint">
+                ({signed(x.realizedPnl)} realized · {signed(x.unrealizedPnl)} open)
               </span>
-              <span className={item}>
-                <span className={label}>Volume</span>
-                {fmtUsd(Number(x.volumeQuote))}
-              </span>
-              <span className={item}>
-                <span className={label}>Books</span>
-                {x.quoting}/{x.books} quoting · {x.orders} orders
-              </span>
-            </Fragment>
-          );
-        })}
-        {t.trades > 0 && (
-          <span className={item} title="Notional-weighted edge at fill, and what was left of it at each mark-out">
-            <span className={label}>Edge</span>
-            {bps(t.edgeBps)} at fill
-            {t.horizonsSecs.map((h, i) => (
-              <span key={h}>
-                · {bps(t.markouts[i])} at +{h}s
-              </span>
-            ))}
-            <span className="text-faint">bps</span>
-          </span>
-        )}
-      </div>
-      <Button
-        size="xs"
-        tone="ghost"
-        className="-my-1 self-center"
-        aria-expanded={bulk}
-        onClick={() => onBulk(!bulk)}
-        title={bulk ? "Close the all-books parameter editor" : "Edit parameters across every book"}
-      >
-        <SlidersHorizontal size={12} /> Parameters {bulk ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-      </Button>
+            </span>
+            <span className={barItem}>
+              <span className={barLabel}>Volume</span>
+              {fmtUsd(Number(x.volumeQuote))}
+            </span>
+            <span className={barItem}>
+              <span className={barLabel}>Books</span>
+              {x.quoting}/{x.books} quoting · {x.orders} orders
+            </span>
+          </Fragment>
+        );
+      })}
+      {t.trades > 0 && (
+        <span className={barItem} title="Notional-weighted edge at fill, and what was left of it at each mark-out">
+          <span className={barLabel}>Edge</span>
+          {bps(t.edgeBps)} at fill
+          {t.horizonsSecs.map((h, i) => (
+            <span key={h}>
+              · {bps(t.markouts[i])} at +{h}s
+            </span>
+          ))}
+          <span className="text-faint">bps</span>
+        </span>
+      )}
+    </SummaryBar>
+  );
+}
 
-      <span className={label}>Activity</span>
-      <div className={cx(row, "col-span-2")}>
-        {d.totals.map((x) => {
-          const st = x.stats;
-          const maker = st.fills - st.takeFills;
-          return (
-            <Fragment key={x.quote}>
-              <span className={item} title="New, modify and cancel requests sent">
-                <span className={label}>Requests</span>
-                {st.creates} new · <span className="text-info">{st.modifies} modify</span> · {st.cancels} cancel
-              </span>
-              <span className={item}>
-                <span className={label}>Fills</span>
-                <span className="text-buy">{st.fills}</span>
-                <span className="text-faint">· {st.takeFills} from takes</span>
-                {st.rejects > 0 && <span className="text-sell">· {st.rejects} rejects</span>}
-              </span>
-              <span className={item} title="Of the fills, how many were the ladders' resting orders being hit, rather than takes crossing the spread">
-                <span className={label}>Maker</span>
-                {st.fills ? (
-                  <>
-                    {Math.round((100 * maker) / st.fills)}%
-                    <span className="text-faint">
-                      · {maker} of {st.fills} fills
-                    </span>
-                  </>
-                ) : (
-                  <span className="text-faint">—</span>
-                )}
-              </span>
-            </Fragment>
-          );
-        })}
-      </div>
-    </section>
+// What every book has been doing; opens the all-books parameter editor.
+function ActivityBar({ d, open, onToggle }: { d: QuoterDeskStatus; open: boolean; onToggle: (open: boolean) => void }) {
+  if (!d.books.length) return null;
+  return (
+    <SummaryBar
+      name="Activity"
+      button={
+        <OpenButton
+          open={open}
+          onToggle={onToggle}
+          icon={<SlidersHorizontal size={12} />}
+          label="Parameters"
+          title={open ? "Close the all-books parameter editor" : "Edit parameters across every book"}
+        />
+      }
+    >
+      {d.totals.map((x) => {
+        const st = x.stats;
+        const maker = st.fills - st.takeFills;
+        return (
+          <Fragment key={x.quote}>
+            <span className={barItem} title="New, modify and cancel requests sent">
+              <span className={barLabel}>Requests</span>
+              {st.creates} new · <span className="text-info">{st.modifies} modify</span> · {st.cancels} cancel
+            </span>
+            <span className={barItem}>
+              <span className={barLabel}>Fills</span>
+              <span className="text-buy">{st.fills}</span>
+              <span className="text-faint">· {st.takeFills} from takes</span>
+              {st.rejects > 0 && <span className="text-sell">· {st.rejects} rejects</span>}
+            </span>
+            <span className={barItem} title="Of the fills, how many were the ladders' resting orders being hit, rather than takes crossing the spread">
+              <span className={barLabel}>Maker</span>
+              {st.fills ? (
+                <>
+                  {Math.round((100 * maker) / st.fills)}%
+                  <span className="text-faint">
+                    · {maker} of {st.fills} fills
+                  </span>
+                </>
+              ) : (
+                <span className="text-faint">—</span>
+              )}
+            </span>
+          </Fragment>
+        );
+      })}
+    </SummaryBar>
   );
 }
 
@@ -1604,7 +1659,9 @@ function TradesView() {
       <Divider vertical />
       <Pane id="quoter-trades-list" defaultSize="68" minSize={160}>
         <div className={pane}>
-          <TradesTable trades={r.trades} hz={r.horizonsSecs} count={r.total.trades} />
+          <Panel title={`Trades · all books (${r.total.trades})`} className="h-full">
+            <TradesTable id="quoter-trades" trades={r.trades} hz={r.horizonsSecs} />
+          </Panel>
         </div>
       </Pane>
     </Split>
@@ -1752,7 +1809,7 @@ function SummaryTable({ byBook, total, hz }: { byBook: QuoterTradeSummary[]; tot
   );
 }
 
-function TradesTable({ trades, hz, count }: { trades: QuoterTrade[]; hz: number[]; count: number }) {
+function TradesTable({ id, trades, hz }: { id: string; trades: QuoterTrade[]; hz: number[] }) {
   const [filters, setFilters] = useState<ColumnFiltersState>([]);
   const rows = useMemo<TradeRow[]>(
     () =>
@@ -1888,18 +1945,16 @@ function TradesTable({ trades, hz, count }: { trades: QuoterTrade[]; hz: number[
     return { symbol: count((r) => r.symbol), side: count((r) => r.side), kind: count((r) => r.kind) };
   }, [rows]);
   return (
-    <Panel title={`Trades (${count})`} className="h-full">
-      <DataTable<TradeRow>
-        id="quoter-trades"
-        data={rows}
-        columns={columns as ColumnDef<TradeRow, unknown>[]}
-        getRowId={(r) => r.id}
-        defaultSorting={[{ id: "time", desc: true }]}
-        filters={filters}
-        onFiltersChange={setFilters}
-        facets={facets}
-        empty="No fills yet this run"
-      />
-    </Panel>
+    <DataTable<TradeRow>
+      id={id}
+      data={rows}
+      columns={columns as ColumnDef<TradeRow, unknown>[]}
+      getRowId={(r) => r.id}
+      defaultSorting={[{ id: "time", desc: true }]}
+      filters={filters}
+      onFiltersChange={setFilters}
+      facets={facets}
+      empty="No fills yet this run"
+    />
   );
 }
