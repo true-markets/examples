@@ -2,7 +2,7 @@ import { Ban, Monitor, Moon, OctagonX, Pause, Play, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 import { isActionable } from "../../../shared/orders.ts";
 import { useCancelAll, useDemoStrategy, useSession, useSetDemoStrategy } from "../api.ts";
-import { useConn, useOrders } from "../store.ts";
+import { store, useConn, useOrders } from "../store.ts";
 import { useTheme, type Theme } from "../theme.ts";
 import { useUi } from "../ui-state.tsx";
 import { ConfirmCancel } from "./ConfirmCancel.tsx";
@@ -107,7 +107,10 @@ function ConnectionDot() {
     const t = setInterval(() => tick((n) => n + 1), 1_000);
     return () => clearInterval(t);
   }, []);
-  const quiet = conn.lastMessageAt ? Math.round((Date.now() - conn.lastMessageAt) / 1000) : undefined;
+  // Read live, not from the snapshot: every message moves lastMessageAt without a re-render, and the
+  // tick above re-reads it each second.
+  const last = store.conn.lastMessageAt;
+  const quiet = last ? Math.round((Date.now() - last) / 1000) : undefined;
   const bad = conn.socket !== "open" || conn.auth === "ERROR" || conn.auth === "UNAUTHORIZED";
   const label =
     conn.socket === "connecting" ? "Connecting…" : conn.socket === "closed" ? "Disconnected, retrying" : conn.auth === "AUTHENTICATED" ? "Streaming" : (conn.auth ?? "Open");
