@@ -809,7 +809,28 @@ function PricesCard({ s, paper }: { s: QuoterStatus; paper: boolean }) {
       <Row label="Book bid / ask" title={paper ? "The exchange's best bid and ask; in paper mode, the reference's" : "The exchange's best bid and ask"}>
         <span className="text-buy">{s.bestBid ? fmtPrice(s.bestBid) : "—"}</span> / <span className="text-sell">{s.bestAsk ? fmtPrice(s.bestAsk) : "—"}</span>
       </Row>
+      <Row label="Bid from mid" title="The book's best bid against the reference mid, in bps and dollars">
+        <FromMid price={s.bestBid} mid={ref?.mid} />
+      </Row>
+      <Row label="Ask from mid" title="The book's best ask against the reference mid, in bps and dollars">
+        <FromMid price={s.bestAsk} mid={ref?.mid} />
+      </Row>
     </Card>
+  );
+}
+
+// How far a price sits from the mid: negative below it, positive above.
+function FromMid({ price, mid }: { price: string | null | undefined; mid: string | null | undefined }) {
+  const p = Number(price);
+  const m = Number(mid);
+  if (!(p > 0) || !(m > 0)) return <span className="text-faint">—</span>;
+  const d = p - m;
+  const sign = d > 0 ? "+" : d < 0 ? "−" : "";
+  return (
+    <>
+      {sign}
+      {Math.abs((d / m) * 10_000).toFixed(1)} bps <span className="text-faint">· {sign + fmtUsd(Math.abs(d))}</span>
+    </>
   );
 }
 
@@ -938,6 +959,18 @@ function ActivityCard({ s }: { s: QuoterStatus }) {
       </Row>
       <Row label="Takes / filled" title="IOC orders sent to cross the spread (profit taker and takeout), and how many traded">
         {st.takes} / <span className={st.takeFills ? "text-buy" : ""}>{st.takeFills}</span>
+      </Row>
+      <Row label="Maker share" title="Of the fills, how many were the ladder's resting orders being hit, rather than takes crossing the spread">
+        {st.fills ? (
+          <>
+            {Math.round((100 * (st.fills - st.takeFills)) / st.fills)}%{" "}
+            <span className="text-faint">
+              · {st.fills - st.takeFills} of {st.fills}
+            </span>
+          </>
+        ) : (
+          "—"
+        )}
       </Row>
       <Row label="Modify share" title="Of the requests that changed a resting order, how many were modifies rather than cancels">
         {st.modifies + st.cancels ? `${Math.round((100 * st.modifies) / (st.modifies + st.cancels))}%` : "—"}
