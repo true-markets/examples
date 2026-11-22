@@ -1,5 +1,5 @@
-import { CircleAlert, Play, Plus, RotateCcw, Square, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { CircleAlert, CircleHelp, Play, Plus, RotateCcw, Square, Trash2 } from "lucide-react";
+import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
 import { Panel as Pane } from "react-resizable-panels";
 import { Divider, pane, Split } from "./Layout.tsx";
 import type { QuoterBookSummary, QuoterDeskStatus, QuoterOrder, QuoterParamSpec, QuoterParams, QuoterStatus, QuoterTarget } from "../../../shared/api.ts";
@@ -27,6 +27,7 @@ export function QuoterScreen() {
   const status = useQuoterStatus(!!session?.quoter);
   const desk = status.data;
   const [picked, setPicked] = useState<string>();
+  const [help, setHelp] = useHelpSetting();
   const books = desk?.books ?? [];
   // The picked book, or the first one if it's gone (removed) or nothing was picked yet.
   const selected = books.find((b) => b.market.symbol === picked)?.market.symbol ?? books[0]?.market.symbol;
@@ -49,41 +50,43 @@ export function QuoterScreen() {
   if (!desk) return <Empty>Connecting to the quoter…</Empty>;
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2">
-      <DeskBar d={desk} stale={!!status.error} />
-      <Warnings list={desk.warnings} />
-      <div className="min-h-0 flex-1">
-        <Split id="quoter" orientation="horizontal">
-          <Pane id="quoter-left" defaultSize="22" minSize={260}>
-            <Split id="quoter-left" orientation="vertical">
-              <Pane id="quoter-books" defaultSize="55" minSize={120}>
-                <div className={pane}>
-                  <BooksPanel d={desk} selected={selected} onSelect={setPicked} />
-                </div>
-              </Pane>
-              <Divider vertical />
-              <Pane id="quoter-balances" defaultSize="45" minSize={100}>
-                <div className={pane}>
-                  <SharedBalancesPanel d={desk} />
-                </div>
-              </Pane>
-            </Split>
-          </Pane>
-          <Divider />
-          <Pane id="quoter-book" defaultSize="78" minSize="40">
-            <div className={pane}>
-              {selected ? (
-                <BookView key={selected} symbol={selected} live={desk.environment === "production"} paper={desk.mode === "paper"} />
-              ) : (
-                <Panel title="No books yet" className="h-full">
-                  <Empty>Add a book on the left. It starts stopped, with a preview of what it would quote, until you start it.</Empty>
-                </Panel>
-              )}
-            </div>
-          </Pane>
-        </Split>
+    <ShowHelp.Provider value={help}>
+      <div className="flex h-full min-h-0 flex-col gap-2">
+        <DeskBar d={desk} stale={!!status.error} help={help} onHelp={setHelp} />
+        <Warnings list={desk.warnings} />
+        <div className="min-h-0 flex-1">
+          <Split id="quoter" orientation="horizontal">
+            <Pane id="quoter-left" defaultSize="22" minSize={260}>
+              <Split id="quoter-left" orientation="vertical">
+                <Pane id="quoter-books" defaultSize="55" minSize={120}>
+                  <div className={pane}>
+                    <BooksPanel d={desk} selected={selected} onSelect={setPicked} />
+                  </div>
+                </Pane>
+                <Divider vertical />
+                <Pane id="quoter-balances" defaultSize="45" minSize={100}>
+                  <div className={pane}>
+                    <SharedBalancesPanel d={desk} />
+                  </div>
+                </Pane>
+              </Split>
+            </Pane>
+            <Divider />
+            <Pane id="quoter-book" defaultSize="78" minSize="40">
+              <div className={pane}>
+                {selected ? (
+                  <BookView key={selected} symbol={selected} live={desk.environment === "production"} paper={desk.mode === "paper"} />
+                ) : (
+                  <Panel title="No books yet" className="h-full">
+                    <Empty>Add a book on the left. It starts stopped, with a preview of what it would quote, until you start it.</Empty>
+                  </Panel>
+                )}
+              </div>
+            </Pane>
+          </Split>
+        </div>
       </div>
-    </div>
+    </ShowHelp.Provider>
   );
 }
 
@@ -99,6 +102,36 @@ function Warnings({ list }: { list: string[] }) {
       ))}
     </div>
   );
+}
+
+// ---------- help text ----------
+
+// The explanations under parameters and panels are for learning the quoter; once you know it, the
+// Help switch in the Quoter bar hides them. The choice is kept per browser. Tooltips stay.
+const ShowHelp = createContext(true);
+const helpKey = "cefi-console:quoter-help";
+
+function useHelpSetting(): [boolean, (on: boolean) => void] {
+  const [on, setOn] = useState(() => {
+    try {
+      return localStorage.getItem(helpKey) !== "off";
+    } catch {
+      return true;
+    }
+  });
+  const set = (v: boolean) => {
+    setOn(v);
+    try {
+      localStorage.setItem(helpKey, v ? "on" : "off");
+    } catch {
+      // not remembered
+    }
+  };
+  return [on, set];
+}
+
+function Help({ children }: { children: ReactNode }) {
+  return useContext(ShowHelp) ? <>{children}</> : null;
 }
 
 // "BTC-USD" is a Coinbase product; "hyperliquid:xyz:GOOGL" is a Hyperliquid perp (tokenized stocks).
@@ -121,7 +154,7 @@ function StateBadge({ state }: { state: QuoterStatus["state"] }) {
 
 // ---------- the whole quoter ----------
 
-function DeskBar({ d, stale }: { d: QuoterDeskStatus; stale: boolean }) {
+function DeskBar({ d, stale, help, onHelp }: { d: QuoterDeskStatus; stale: boolean; help: boolean; onHelp: (on: boolean) => void }) {
   const control = useQuoterControl();
   const [confirm, setConfirm] = useState(false);
   const live = d.environment === "production";
@@ -164,6 +197,15 @@ function DeskBar({ d, stale }: { d: QuoterDeskStatus; stale: boolean }) {
       </span>
       {stale && <span className="text-[11px] text-sell">· lost contact with the quoter, showing the last status</span>}
       <div className="ml-auto flex items-center gap-2">
+        <Button
+          size="xs"
+          tone="ghost"
+          aria-pressed={help}
+          onClick={() => onHelp(!help)}
+          title={help ? "Hide the explanations under parameters and panels" : "Show the explanations under parameters and panels"}
+        >
+          <CircleHelp size={12} className={help ? "text-info" : undefined} /> Help {help ? "on" : "off"}
+        </Button>
         {running && (
           <Button
             tone="danger"
@@ -351,10 +393,12 @@ function SharedBalancesPanel({ d }: { d: QuoterDeskStatus }) {
             </tbody>
           </table>
         </div>
-        <p className="border-t border-line px-3 py-2 text-[11px] leading-relaxed text-faint">
-          One ledger for every book. A book takes funds from it before each new order or modify, so two books never spend the same balance. Read{" "}
-          {d.balancesReadAt ? new Date(d.balancesReadAt).toLocaleTimeString() : "not yet"}; between reads it follows the books' own orders and fills live.
-        </p>
+        <Help>
+          <p className="border-t border-line px-3 py-2 text-[11px] leading-relaxed text-faint">
+            One ledger for every book. A book takes funds from it before each new order or modify, so two books never spend the same balance. Read{" "}
+            {d.balancesReadAt ? new Date(d.balancesReadAt).toLocaleTimeString() : "not yet"}; between reads it follows the books' own orders and fills live.
+          </p>
+        </Help>
       </div>
     </Panel>
   );
@@ -618,17 +662,13 @@ function LadderPanel({ s }: { s: QuoterStatus }) {
               {rows.map((r) => (
                 <tr key={r.level} className="border-b border-line/60">
                   <td className="px-2 py-1.5">{r.bid && <OrderBadge o={r.bid} />}</td>
-                  <td className="px-2 py-1.5 text-right">
-                    {r.bid ? <Size o={r.bid} /> : r.bidTarget ? <TargetSize t={r.bidTarget} /> : null}
-                  </td>
+                  <td className="px-2 py-1.5 text-right">{r.bid ? <Size o={r.bid} /> : r.bidTarget ? <TargetSize t={r.bidTarget} /> : null}</td>
                   <td className="px-2 py-1.5 text-right text-buy">{r.bid ? <OrderPrice o={r.bid} /> : "—"}</td>
                   <td className="px-2 py-1.5 text-right text-faint">{r.bidTarget ? fmtPrice(r.bidTarget.price) : ""}</td>
                   <td className="px-2 py-1.5 text-center text-muted">{r.level}</td>
                   <td className="px-2 py-1.5 text-faint">{r.askTarget ? fmtPrice(r.askTarget.price) : ""}</td>
                   <td className="px-2 py-1.5 text-sell">{r.ask ? <OrderPrice o={r.ask} /> : "—"}</td>
-                  <td className="px-2 py-1.5">
-                    {r.ask ? <Size o={r.ask} /> : r.askTarget ? <TargetSize t={r.askTarget} /> : null}
-                  </td>
+                  <td className="px-2 py-1.5">{r.ask ? <Size o={r.ask} /> : r.askTarget ? <TargetSize t={r.askTarget} /> : null}</td>
                   <td className="px-2 py-1.5 text-right">{r.ask && <OrderBadge o={r.ask} />}</td>
                 </tr>
               ))}
@@ -642,11 +682,13 @@ function LadderPanel({ s }: { s: QuoterStatus }) {
             </tbody>
           </table>
         </div>
-        <p className="border-t border-line px-3 py-2 text-[11px] leading-relaxed text-faint">
-          Target is where the strategy wants each order this cycle; Bid and Ask are where the orders rest, with an arrow while a modify is in flight. An order
-          only moves once its target is at least the modify threshold away ({s.params.modifyThresholdBps} bps). Size is what is still resting, in{" "}
-          {s.market.baseSymbol}, with its value in dollars ({s.market.quoteSymbol}) under it.
-        </p>
+        <Help>
+          <p className="border-t border-line px-3 py-2 text-[11px] leading-relaxed text-faint">
+            Target is where the strategy wants each order this cycle; Bid and Ask are where the orders rest, with an arrow while a modify is in flight. An order
+            only moves once its target is at least the modify threshold away ({s.params.modifyThresholdBps} bps). Size is what is still resting, in{" "}
+            {s.market.baseSymbol}, with its value in dollars ({s.market.quoteSymbol}) under it.
+          </p>
+        </Help>
       </div>
     </Panel>
   );
@@ -771,12 +813,14 @@ function ParamsPanel({ symbol, s }: { symbol: string; s: QuoterStatus }) {
           <div className="flex items-center gap-3 border-b border-line px-3 py-2">
             <span className="min-w-0 flex-1">
               <span className={cx("block text-xs font-medium", draft.sizeUnit !== current.sizeUnit && "text-info")}>Sizes in</span>
-              <span className="block text-[11px] leading-snug text-faint">
-                {sizeUnit === "quote"
-                  ? `Quote size, max position change and max base to use are in ${quote}, converted to ${base} at the reference price every cycle.`
-                  : `Quote size, max position change and max base to use are in ${base}.`}{" "}
-                Switching converts them at the current price.
-              </span>
+              <Help>
+                <span className="block text-[11px] leading-snug text-faint">
+                  {sizeUnit === "quote"
+                    ? `Quote size, max position change and max base to use are in ${quote}, converted to ${base} at the reference price every cycle.`
+                    : `Quote size, max position change and max base to use are in ${base}.`}{" "}
+                  Switching converts them at the current price.
+                </span>
+              </Help>
             </span>
             <div className="flex shrink-0 rounded border border-line p-0.5" role="radiogroup" aria-label="Sizes in">
               {(["base", "quote"] as const).map((u) => (
@@ -807,7 +851,9 @@ function ParamsPanel({ symbol, s }: { symbol: string; s: QuoterStatus }) {
                     {spec.label}
                     {unit && <span className="ml-1 font-normal text-faint">{unit}</span>}
                   </span>
-                  <span className="block text-[11px] leading-snug text-faint">{spec.help}</span>
+                  <Help>
+                    <span className="block text-[11px] leading-snug text-faint">{spec.help}</span>
+                  </Help>
                   {errors[spec.key] && <span className="block text-[11px] text-sell">{errors[spec.key]}</span>}
                 </span>
                 <input
@@ -821,9 +867,11 @@ function ParamsPanel({ symbol, s }: { symbol: string; s: QuoterStatus }) {
             );
           })}
         </div>
-        <p className="border-t border-line px-3 py-2 text-[11px] leading-relaxed text-faint">
-          Changes apply to this book on its next cycle. The quoter saves them to its books file, so they're still there after a restart.
-        </p>
+        <Help>
+          <p className="border-t border-line px-3 py-2 text-[11px] leading-relaxed text-faint">
+            Changes apply to this book on its next cycle. The quoter saves them to its books file, so they're still there after a restart.
+          </p>
+        </Help>
       </div>
     </Panel>
   );
