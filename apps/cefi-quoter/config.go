@@ -27,6 +27,7 @@ type Config struct {
 	IDPrefix       string
 
 	Transport string // rest or fix
+	OrderRate int    // most order requests a second, across every book
 	FIX       FIXConfig
 
 	AdminAddr  string
@@ -101,6 +102,7 @@ func loadConfig() (Config, error) {
 		AutoStart:      getBool("QUOTER_AUTOSTART", false),
 		IDPrefix:       get("QUOTER_ID_PREFIX", "cq"),
 		Transport:      get("ORDER_TRANSPORT", "rest"),
+		OrderRate:      getInt("ORDER_RATE_LIMIT", 20),
 		AdminAddr:      get("ADMIN_ADDR", "127.0.0.1:4860"),
 		AdminToken:     get("ADMIN_TOKEN", ""),
 		LogLevel:       get("LOG_LEVEL", "info"),

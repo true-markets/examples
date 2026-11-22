@@ -119,6 +119,12 @@ The order of the requests matters as much as the kind. A plan goes out as cancel
 
 `paper/exchange_test.go` shows the difference in a few lines: with the whole balance on one bid, moving it with a modify works, and placing a second order does not.
 
+### Staying under the rate limit
+
+The exchange limits order requests per account, so every book shares one budget (`quoter/pacer.go`): `ORDER_RATE_LIMIT` requests a second on average, in bursts of up to twice that. A book that runs out mid-round stops there and plans again on its next cycle, with fresh prices, rather than queueing requests that would be stale by the time they went out. The plan's order makes any cut-off point safe: cancels and modifies that free funds go first.
+
+If the exchange rejects a request for its rate limit anyway ("Rate limit exceeded" over FIX, a 429 over REST), every book stops sending for a second, and its state reads "rate limited". Resting quotes stay where they are, since pulling them would take requests the limit doesn't have. Another rate-limit reject within 30s of the last pause doubles it, up to 30s. Rejects for requests already on the wire land during the pause and neither extend it nor fill the events: each pause is one event.
+
 ### Taking: getting unstuck
 
 Resting quotes alone can jam a book. A move fills one side up to the max position change, that side stops quoting, and the position only comes back when someone trades against the other side's quotes. So each book has two takers that cross the spread with an IOC (immediate or cancel) order when the exchange's book pays for it. Both are ported from the internal Python quoter ([quoter/taker.go](quoter/taker.go)):
@@ -242,7 +248,7 @@ To start everything from zero, stop the quoter and delete the state file.
 
 ### When it stops quoting
 
-The state on the Quoter screen always says why. A book pulls its quotes when you stop it, when the drop copy or market data disconnects (it would be quoting blind), when the reference feed has said nothing about its product for `REF_STALE_MS`, or when its price hasn't changed for a minute. Coinbase's ticker only publishes on trades and Hyperliquid's bbo only when the touch moves, so a quiet market's price can be seconds old while its feed is healthy; each source's per-product heartbeat is what counts as alive. It holds its quotes, without adding to them, while it waits for balances or reads its orders back after a reconnect.
+The state on the Quoter screen always says why. A book pulls its quotes when you stop it, when the drop copy or market data disconnects (it would be quoting blind), when the reference feed has said nothing about its product for `REF_STALE_MS`, or when its price hasn't changed for a minute. Coinbase's ticker only publishes on trades and Hyperliquid's bbo only when the touch moves, so a quiet market's price can be seconds old while its feed is healthy; each source's per-product heartbeat is what counts as alive. It holds its quotes, without adding to them, while it waits for balances, reads its orders back after a reconnect, or waits out a [rate-limit pause](#staying-under-the-rate-limit).
 
 ## Settings
 

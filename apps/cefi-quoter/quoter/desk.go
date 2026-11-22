@@ -46,9 +46,12 @@ type DeskConfig struct {
 	ClientID    string
 	Transport   string // rest or fix
 	IDPrefix    string
-	Defaults    Params // for books added without their own settings
-	Catalog     []Listing
-	Venue       Venue
+	// OrderRate is the most order requests a second, across every book (see Pacer). 0 for no
+	// limit of our own; a rate-limit reject still pauses sending.
+	OrderRate int
+	Defaults  Params // for books added without their own settings
+	Catalog   []Listing
+	Venue     Venue
 	// NewTransport makes the order transport for one book.
 	NewTransport func(Market) Transport
 	// CheckReference fails if a reference source doesn't exist. Optional.
@@ -76,6 +79,7 @@ type DeskConfig struct {
 type Desk struct {
 	cfg     DeskConfig
 	ledger  *Ledger
+	pacer   *Pacer
 	journal *Journal
 	log     *slog.Logger
 	catalog map[string]Listing
@@ -110,6 +114,7 @@ func NewDesk(cfg DeskConfig) *Desk {
 	d := &Desk{
 		cfg:          cfg,
 		ledger:       NewLedger(),
+		pacer:        NewPacer(cfg.OrderRate),
 		journal:      NewJournal(),
 		log:          cfg.Log,
 		catalog:      map[string]Listing{},
@@ -174,6 +179,7 @@ func (d *Desk) Add(ctx context.Context, symbol string, blend *reference.BlendCon
 	book := NewBook(d.cfg.IDPrefix, l.InstrumentID)
 	e := NewEngine(market, p, d.cfg.Venue, d.ledger, d.cfg.NewTransport(market), book, enabled, d.log.With("book", symbol))
 	e.journal = d.journal
+	e.pacer = d.pacer
 
 	d.mu.Lock()
 	if _, exists := d.books[symbol]; exists {

@@ -128,6 +128,7 @@ func run() error {
 
 	dc := v.desk
 	dc.IDPrefix = cfg.IDPrefix
+	dc.OrderRate = cfg.OrderRate
 	dc.Defaults = cfg.Params
 	dc.CheckReference = reference.Check
 	dc.Subscribe = ticker.Add

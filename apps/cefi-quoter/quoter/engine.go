@@ -3,7 +3,6 @@ package quoter
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -72,6 +71,7 @@ type Engine struct {
 	log    *slog.Logger
 	venue  Venue
 	ledger *Ledger
+	pacer  *Pacer // shared by every book; nil sends unpaced
 	tx     Transport
 	book   *Book
 	wake   chan struct{}
@@ -117,8 +117,10 @@ type Stats struct {
 	Modifies int `json:"modifies"`
 	Cancels  int `json:"cancels"`
 	Rejects  int `json:"rejects"`
-	Errors   int `json:"errors"`
-	Fills    int `json:"fills"`
+	// RateLimited is requests refused for the exchange's rate limit (counted in Rejects or Errors too).
+	RateLimited int `json:"rateLimited"`
+	Errors      int `json:"errors"`
+	Fills       int `json:"fills"`
 	// Takes is IOC orders sent to cross the spread; TakeFills is how many of them traded.
 	Takes     int `json:"takes"`
 	TakeFills int `json:"takeFills"`
@@ -238,7 +240,11 @@ func (e *Engine) OnDropCopy(d tm.DropCopy) {
 		if isBalanceReject(res.Reject) {
 			e.ledger.MarkDirty()
 		}
-		e.eventLocked("reject", fmt.Sprintf("%s %s rejected: %s", res.Side, levelName(res.Level), res.Reject))
+		if isRateLimitReject(res.Reject) {
+			e.rateLimitedLocked(res.Reject)
+		} else {
+			e.eventLocked("reject", fmt.Sprintf("%s %s rejected: %s", res.Side, levelName(res.Level), res.Reject))
+		}
 	}
 	if res.Orphan != "" {
 		e.orphans = append(e.orphans, res.Orphan)
@@ -255,8 +261,22 @@ func (e *Engine) OnCancelReject(clOrdID, _ string, responseTo, text string) {
 	}
 	e.book.CancelRejected(clOrdID, responseTo)
 	e.mu.Lock()
-	e.eventLocked("warn", "FIX cancel/replace rejected: "+text)
+	if isRateLimitReject(text) {
+		e.rateLimitedLocked(text)
+	} else {
+		e.eventLocked("warn", "FIX cancel/replace rejected: "+text)
+	}
 	e.mu.Unlock()
+}
+
+// rateLimitedLocked handles a request the exchange refused for its rate limit: every book stops
+// sending for a while (see Pacer). One event per pause, not one per reject: a burst that hit the
+// limit brings back a reject for every request still on the wire.
+func (e *Engine) rateLimitedLocked(text string) {
+	e.stats.RateLimited++
+	if d := e.pacer.Limited(); d > 0 {
+		e.eventLocked("warn", fmt.Sprintf("rate limited by the exchange (%s); every book pauses sending for %s", text, d))
+	}
 }
 
 // SetConn records a connection going up or down.
@@ -485,6 +505,9 @@ func (e *Engine) haltReasonLocked() (reason string, pull bool) {
 		return "waiting for the book's best bid and offer", false
 	case e.needResync:
 		return "reading back orders", false
+	case e.pacer.PausedFor() > 0:
+		// Resting quotes stay: pulling them would take requests the limit doesn't have.
+		return fmt.Sprintf("rate limited (%s)", e.pacer.PausedFor().Round(100*time.Millisecond)), false
 	}
 	return "", false
 }
@@ -534,6 +557,12 @@ func (e *Engine) execute(ctx context.Context, steps []Step) {
 	p = p.InBase(mid)
 	for _, s := range steps {
 		if ctx.Err() != nil {
+			return
+		}
+		// Out of requests for now: the rest waits for the next cycle, planned again with fresh
+		// prices. Plan's order (cancels, then modifies that free funds, then the rest) means what
+		// does go out is safe on its own.
+		if !e.pacer.Take() {
 			return
 		}
 		asset, alloc := e.market.QuoteAssetID, p.MaxQuoteAlloc
@@ -587,7 +616,7 @@ func (e *Engine) execute(ctx context.Context, steps []Step) {
 			err = e.tx.Cancel(ctx, s.ExternalID, cl, orig)
 			e.after(s, s.ExternalID, err)
 		}
-		if errors.Is(err, tm.ErrRateLimited) {
+		if err != nil && isRateLimitErr(err) {
 			return // nothing else will get through until the window resets
 		}
 	}
@@ -611,6 +640,11 @@ func (e *Engine) after(s Step, externalID string, err error) {
 		return
 	}
 	e.stats.Errors++
+	if isRateLimitErr(err) {
+		e.book.SendFailed(externalID, s.Kind)
+		e.rateLimitedLocked(err.Error())
+		return
+	}
 	if notSent(err) {
 		e.book.SendFailed(externalID, s.Kind)
 		if s.Kind == Create {
@@ -925,6 +959,9 @@ func (e *Engine) executeTake(ctx context.Context, d *takeDecision, quotes []Orde
 	}
 	if d.Kind == ProfitTake {
 		alloc = decimal.Zero // getting out isn't held to the book's allocation, only to what's free
+	}
+	if !e.pacer.Take() {
+		return
 	}
 	var o *Order
 	e.ledger.Reserve(e.book, asset, alloc, func(room decimal.Decimal) {
