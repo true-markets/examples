@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/shopspring/decimal"
 	"github.com/true-markets/examples/apps/cefi-quoter/quoter"
 )
 
@@ -83,6 +84,12 @@ func loadBooks(path string, defaults quoter.Params) (books []savedBook, warnings
 				return nil, nil, fmt.Errorf("%s: %s: %w", path, sym, err)
 			}
 		}
+		// Books saved before taking existed have no take size of their own, and the default is in
+		// dollars. In a book sized in the base asset that would read as 20 coins; use the book's
+		// own scale instead.
+		if _, set := keys["takeMaxSize"]; !set && p.SizeUnit == quoter.SizeInBase && defaults.SizeUnit != quoter.SizeInBase {
+			p.TakeMaxSize = baseTakeSize(p)
+		}
 		out = append(out, savedBook{Symbol: sym, Reference: b.Reference, Params: p})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Symbol < out[j].Symbol })
@@ -113,4 +120,13 @@ func saveBooks(path string, books map[string]quoter.BookConfig) error {
 		return err
 	}
 	return os.Rename(tmp.Name(), path)
+}
+
+// baseTakeSize is a take size on a base-asset book's own scale: its max position change, or a
+// level's size if it has no position limit.
+func baseTakeSize(p quoter.Params) decimal.Decimal {
+	if p.MaxPosition.IsPositive() {
+		return p.MaxPosition
+	}
+	return p.QuoteSize
 }

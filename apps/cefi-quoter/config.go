@@ -121,7 +121,6 @@ func loadConfig() (Config, error) {
 			Takeout:             getBool("TAKEOUT", false),
 			TakeEdgeBps:         getFloat("TAKE_EDGE_BPS", 25),
 			TakeFlattenFloorBps: getFloat("TAKE_FLATTEN_FLOOR_BPS", 2),
-			TakeMaxSize:         getDec("TAKE_MAX_SIZE", "20"),
 			TakeCoolDownMs:      getInt("TAKE_COOL_DOWN_MS", 3000),
 			TakerFeeBps:         getFloat("TAKER_FEE_BPS", 0),
 		},
@@ -136,6 +135,15 @@ func loadConfig() (Config, error) {
 	}
 	if c.Mode != "live" && c.Mode != "paper" {
 		errs = append(errs, fmt.Sprintf("QUOTER_MODE must be live or paper, got %q", c.Mode))
+	}
+	// The default take size is $20, which only makes sense in dollars: with sizes in the base
+	// asset it defaults to the max position change instead.
+	if get("TAKE_MAX_SIZE", "") != "" {
+		c.Params.TakeMaxSize = getDec("TAKE_MAX_SIZE", "")
+	} else if c.Params.SizeUnit == quoter.SizeInBase {
+		c.Params.TakeMaxSize = baseTakeSize(c.Params)
+	} else {
+		c.Params.TakeMaxSize = decimal.NewFromInt(20)
 	}
 	if v := get("QUOTER_SYMBOL", ""); v != "" {
 		errs = append(errs, "QUOTER_SYMBOL is gone: one quoter now runs every book. Add books from the console's Quoter screen, or list them in "+c.BooksFile+" (see README)")

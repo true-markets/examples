@@ -20,7 +20,7 @@ func TestEnvExampleLoads(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(dir)
-	for _, k := range []string{"TM_ENV", "QUOTER_SYMBOL", "PAPER_BALANCES", "QUOTER_BOOKS_FILE", "SIZE_UNIT", "MAX_POSITION", "SPREAD_BPS", "QUOTE_SIZE", "ORDER_TRANSPORT", "QUOTER_MODE", "TM_API_KEY_PATH"} {
+	for _, k := range []string{"TM_ENV", "QUOTER_SYMBOL", "PAPER_BALANCES", "QUOTER_BOOKS_FILE", "SIZE_UNIT", "MAX_POSITION", "TAKE_MAX_SIZE", "PROFIT_TAKER", "TAKEOUT", "SPREAD_BPS", "QUOTE_SIZE", "ORDER_TRANSPORT", "QUOTER_MODE", "TM_API_KEY_PATH"} {
 		t.Setenv(k, "")
 		os.Unsetenv(k)
 	}
@@ -68,6 +68,18 @@ func TestEnvExampleLoads(t *testing.T) {
 	books, dropped, err := loadBooks(cfg.BooksFile, cfg.Params)
 	if err != nil || len(books) != 1 || !books[0].Params.QuoteSize.Equal(decimal.RequireFromString("0.008")) || len(dropped) != 1 || !strings.Contains(dropped[0], "maxBaseAllocUsd (100)") {
 		t.Fatalf("%+v %v %v", books, dropped, err)
+	}
+
+	// A book saved in base units before taking existed gets a take size on its own scale (its max
+	// position change), not the dollar default read as 20 coins.
+	if err := os.WriteFile(cfg.BooksFile, []byte(`{"books": {"BTC-USDC": {"params": {"sizeUnit": "base", "quoteSize": "0.001", "maxPosition": "0.004"}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if books, _, err := loadBooks(cfg.BooksFile, cfg.Params); err != nil || !books[0].Params.TakeMaxSize.Equal(decimal.RequireFromString("0.004")) {
+		t.Fatalf("take size %v %v", books, err)
+	}
+	if !cfg.Params.TakeMaxSize.Equal(decimal.NewFromInt(20)) || !cfg.Params.ProfitTaker || cfg.Params.Takeout {
+		t.Fatalf("take defaults %+v", cfg.Params)
 	}
 
 	// QUOTER_SYMBOL from the single-book version gets a pointer to the books file.
