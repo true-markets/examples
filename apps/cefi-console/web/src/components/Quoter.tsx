@@ -57,9 +57,11 @@ export function QuoterScreen() {
   const has = (s: string | undefined) => !!s && books.some((b) => b.market.symbol === s);
   // The shared instrument if it's a book; else the last book picked here, or the first one.
   const selected = has(shared) ? shared : has(picked) ? picked : books[0]?.market.symbol;
+  // Picking a book shows it, closing any breakdown.
   const select = (s: string) => {
     setPicked(s);
     setSymbol(s);
+    setOpen("none");
   };
   // On this screen the header's buttons follow the book shown, so an instrument without a book
   // gives way to the one that is.
@@ -86,30 +88,20 @@ export function QuoterScreen() {
   // With no books there's nothing to break down.
   const shownOpen = desk.books.length ? open : "none";
 
+  // Books and balances run the full height on the left and always show. On the right: the two
+  // summary bars, then the selected book, or the breakdown one of the bars opened in its place.
   return (
     <ShowHelp.Provider value={help}>
       <div className="flex h-full min-h-0 flex-col gap-2">
         <DeskBar d={desk} stale={!!status.error} help={help} onHelp={setHelp} />
-        <AllBooksBar d={desk} open={shownOpen === "edge"} onToggle={(o) => setOpen(o ? "edge" : "none")} />
-        <ActivityBar d={desk} open={shownOpen === "params"} onToggle={(o) => setOpen(o ? "params" : "none")} />
-        {shownOpen === "edge" && (
-          <div className="min-h-0 flex-1">
-            <TradesView />
-          </div>
-        )}
-        {shownOpen === "params" && (
-          <div className="min-h-0 flex-1">
-            <BulkParams d={desk} />
-          </div>
-        )}
-        {shownOpen === "none" && <Warnings list={desk.warnings} />}
-        <div className={cx("min-h-0 flex-1", shownOpen !== "none" && "hidden")}>
+        <Warnings list={desk.warnings} />
+        <div className="min-h-0 flex-1">
           <Split id="quoter" orientation="horizontal">
             <Pane id="quoter-left" defaultSize="28" minSize={300}>
               <Split id="quoter-left" orientation="vertical">
                 <Pane id="quoter-books" defaultSize="55" minSize={120}>
                   <div className={pane}>
-                    <BooksPanel d={desk} selected={selected} onSelect={select} />
+                    <BooksPanel d={desk} selected={shownOpen === "none" ? selected : undefined} onSelect={select} />
                   </div>
                 </Pane>
                 <Divider vertical />
@@ -122,14 +114,29 @@ export function QuoterScreen() {
             </Pane>
             <Divider />
             <Pane id="quoter-book" defaultSize="72" minSize="40">
-              <div className={pane}>
-                {selected ? (
-                  <BookView key={selected} symbol={selected} live={desk.environment === "production"} paper={desk.mode === "paper"} />
-                ) : (
-                  <Panel title="No books yet" className="h-full">
-                    <Empty>Add a book on the left. It starts stopped, with a preview of what it would quote, until you start it.</Empty>
-                  </Panel>
+              <div className={cx(pane, "flex flex-col gap-2")}>
+                <AllBooksBar d={desk} open={shownOpen === "edge"} onToggle={(o) => setOpen(o ? "edge" : "none")} />
+                <ActivityBar d={desk} open={shownOpen === "params"} onToggle={(o) => setOpen(o ? "params" : "none")} />
+                {shownOpen === "edge" && (
+                  <div className="min-h-0 flex-1">
+                    <TradesView />
+                  </div>
                 )}
+                {shownOpen === "params" && (
+                  <div className="min-h-0 flex-1">
+                    <BulkParams d={desk} />
+                  </div>
+                )}
+                {/* Hidden, not unmounted, under a breakdown: closing it brings the book back as it was. */}
+                <div className={cx("min-h-0 flex-1", shownOpen !== "none" && "hidden")}>
+                  {selected ? (
+                    <BookView key={selected} symbol={selected} live={desk.environment === "production"} paper={desk.mode === "paper"} />
+                  ) : (
+                    <Panel title="No books yet" className="h-full">
+                      <Empty>Add a book on the left. It starts stopped, with a preview of what it would quote, until you start it.</Empty>
+                    </Panel>
+                  )}
+                </div>
               </div>
             </Pane>
           </Split>
@@ -1420,8 +1427,8 @@ function AllBooksBar({ d, open, onToggle }: { d: QuoterDeskStatus; open: boolean
           open={open}
           onToggle={onToggle}
           icon={<ChartColumn size={12} />}
-          label={`Edge and trades${t.trades ? ` (${t.trades})` : ""}`}
-          title={open ? "Close edge by book and trades" : "Edge retention by book, and every trade across the books"}
+          label={`Trades${t.trades ? ` (${t.trades})` : ""}`}
+          title={open ? "Close trades" : "Edge retention by book, and every trade across the books"}
         />
       }
     >
