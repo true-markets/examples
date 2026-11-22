@@ -10,16 +10,16 @@ It runs out of the box against a built-in simulator, so you can see it working b
 
 ## What's on the screen
 
-One quoter runs every book, all on one shared view of the account's balances. The left column is the whole quoter; the right is the book you pick.
+One quoter runs every book, all on one shared view of the account's balances. The left column is the whole quoter; the right is the book you pick. The instrument is shared with the trading view: pick a book here and the trading view shows it, and an instrument picked there shows here when the quoter has a book for it. The quoter's stop buttons sit in the header on both screens, to the right of the cancel buttons: **Stop and pull <base> quotes** for the selected book and **Stop and pull all quotes** for every book. Stopping keeps the quotes pulled, where a plain cancel would see the quoter put them back on its next cycle.
 
 | Area | What it shows | What you can do |
 | --- | --- | --- |
-| **Quoter bar** | LIVE / UAT / PAPER, the number of books, and the health of order entry (REST or FIX), the drop copy, market data and the reference | Start all (production asks first), Stop all |
+| **Quoter bar** | LIVE / UAT / PAPER, the number of books, and the health of order entry (REST or FIX), the drop copy, market data and the reference | Start all (production asks first) |
 | **Books** | Every book with its state, orders, position and PnL, and how much of its bid and ask budgets are in use (colored as on the Budget card) | Pick one to see it; add a book from those the exchange offers, then choose its reference sources in an editor that previews them live |
 | **Shared balances** | Per asset, in USD with the quantity under it: **Balance** (your CeFi balance the quoter can use), **Trading** (held by the quoter's orders), **Unused** (left for new orders), and **Other orders** when orders the quoter didn't place hold some. Totals on top | Sort and filter by any column, as in the trading view's tables |
 | **Totals** | Across every book: PnL (realized and open), volume, books quoting, requests, fills, and edge at fill with its +30s and +300s mark-outs | |
 | **Trades** (the Books / Trades switch) | Every fill this run: side, maker level or which taker, price, notional, fair value at the time, edge at fill, the +30s and +300s mark-outs, and how much edge was kept. A summary per book above it, with all books on its toolbar | Sort and filter by any column, as in the trading view's tables; drag the divider between the two |
-| **Book bar** | Quoting, waiting (with the reason, e.g. "reference feed silent") or stopped, and the book's reference | Start quoting (production asks first), Stop and pull quotes, Remove a stopped book with nothing resting |
+| **Book bar** | Quoting, waiting (with the reason, e.g. "reference feed silent") or stopped, and the book's reference | Start quoting (production asks first), Remove a stopped book with nothing resting |
 | **Book cards** | Three pairs: Prices and Reference sources, Position and Taking, Budget and Activity. Each pair sits side by side when there's room, and folds into one card with tabs when there isn't, so the screen needn't be wide. The cards fill their pane and scroll inside it, so they keep their height whichever tab shows | Pick a tab; it's remembered. Drag the divider under the cards to give them more or less room |
 | **Prices** | The reference price and its age, the mid after inventory skew, the exchange's best bid and ask | |
 | **Reference sources** | Each source in the book's blend: its price lined up by its multiplier, its share of the price, and any that's left out or looks like a split or multiplier | **Edit…** changes sources, weights and multipliers, previewing each change against live prices before it's saved |

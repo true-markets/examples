@@ -1,7 +1,7 @@
-import { Ban, Monitor, Moon, OctagonX, Pause, Play, Sun } from "lucide-react";
+import { Ban, Monitor, Moon, OctagonX, Pause, Play, Square, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 import { isActionable } from "../../../shared/orders.ts";
-import { useCancelAll, useDemoStrategy, useSession, useSetDemoStrategy } from "../api.ts";
+import { useCancelAll, useDemoStrategy, useQuoterControl, useQuoterStatus, useSession, useSetDemoStrategy } from "../api.ts";
 import { store, useConn, useOrders } from "../store.ts";
 import { useTheme, type Theme } from "../theme.ts";
 import { useUi } from "../ui-state.tsx";
@@ -74,6 +74,7 @@ export function Header() {
         <Button tone="danger" size="sm" onClick={() => setConfirm("all")} title="DELETE /v1/cefi/orders/all">
           <OctagonX size={14} /> Cancel all orders{open ? ` (${open})` : ""}
         </Button>
+        {session?.quoter && <QuoterStops symbol={symbol} />}
       </div>
 
       {confirm === "symbol" && symbol && (
@@ -97,6 +98,40 @@ export function Header() {
         />
       )}
     </header>
+  );
+}
+
+// The quoter's stop buttons, on both screens. Stopping a book pulls its quotes and keeps them pulled;
+// a plain cancel would only see the quoter put them back on its next cycle.
+function QuoterStops({ symbol }: { symbol: string | undefined }) {
+  const { data: desk } = useQuoterStatus(true);
+  const control = useQuoterControl();
+  if (!desk) return null;
+  const book = desk.books.find((b) => b.market.symbol === symbol);
+  const anyRunning = desk.books.some((b) => b.enabled);
+  return (
+    <>
+      {book && (
+        <Button
+          tone="danger"
+          size="sm"
+          disabled={!book.enabled || control.isPending}
+          onClick={() => control.mutate({ action: "stop", symbol: book.market.symbol })}
+          title={book.enabled ? `Stop the quoter's ${book.market.symbol} book and cancel its resting orders` : `The quoter isn't quoting ${book.market.symbol}`}
+        >
+          <Square size={12} /> Stop and pull {book.market.baseSymbol} quotes
+        </Button>
+      )}
+      <Button
+        tone="danger"
+        size="sm"
+        disabled={!anyRunning || control.isPending}
+        onClick={() => control.mutate({ action: "stop" })}
+        title={anyRunning ? "Stop every quoter book and cancel every order the quoter has resting" : "No quoter book is quoting"}
+      >
+        <Square size={12} /> Stop and pull all quotes
+      </Button>
+    </>
   );
 }
 

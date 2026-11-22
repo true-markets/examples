@@ -30,6 +30,7 @@ import {
 import { describeBlend, describeSource, ReferenceEditor } from "./ReferenceEditor.tsx";
 import { createColumnHelper, type ColumnDef, type ColumnFiltersState } from "@tanstack/react-table";
 import { DataTable, type ColMeta } from "../table/DataTable.tsx";
+import { useUi } from "../ui-state.tsx";
 import { Stack } from "./Balances.tsx";
 import { price as fmtPrice, qty as fmtQty, quoteUnit, usd as fmtUsd } from "../format.ts";
 import { Button, cx, Empty, inputClass, Modal, Panel, StatusBadge } from "./ui.tsx";
@@ -44,12 +45,25 @@ export function QuoterScreen() {
   const { data: session } = useSession();
   const status = useQuoterStatus(!!session?.quoter);
   const desk = status.data;
+  // The instrument is shared with the trading view: picking a book here selects it there, and an
+  // instrument picked there shows here when the quoter runs a book for it.
+  const { symbol: shared, setSymbol } = useUi();
   const [picked, setPicked] = useState<string>();
   const [help, setHelp] = useHelpSetting();
   const [tab, setTab] = useStoredChoice<"books" | "trades">("cefi-console:quoter-tab", "books", ["books", "trades"]);
   const books = desk?.books ?? [];
-  // The picked book, or the first one if it's gone (removed) or nothing was picked yet.
-  const selected = books.find((b) => b.market.symbol === picked)?.market.symbol ?? books[0]?.market.symbol;
+  const has = (s: string | undefined) => !!s && books.some((b) => b.market.symbol === s);
+  // The shared instrument if it's a book; else the last book picked here, or the first one.
+  const selected = has(shared) ? shared : has(picked) ? picked : books[0]?.market.symbol;
+  const select = (s: string) => {
+    setPicked(s);
+    setSymbol(s);
+  };
+  // On this screen the header's buttons follow the book shown, so an instrument without a book
+  // gives way to the one that is.
+  useEffect(() => {
+    if (selected && selected !== shared) setSymbol(selected);
+  }, [shared, selected, setSymbol]);
 
   if (status.error && !desk) {
     return (
@@ -83,7 +97,7 @@ export function QuoterScreen() {
                 <Split id="quoter-left" orientation="vertical">
                   <Pane id="quoter-books" defaultSize="55" minSize={120}>
                     <div className={pane}>
-                      <BooksPanel d={desk} selected={selected} onSelect={setPicked} />
+                      <BooksPanel d={desk} selected={selected} onSelect={select} />
                     </div>
                   </Pane>
                   <Divider vertical />
@@ -216,7 +230,6 @@ function DeskBar({
   const control = useQuoterControl();
   const [confirm, setConfirm] = useState(false);
   const live = d.environment === "production";
-  const running = d.books.some((b) => b.enabled);
   const names: Record<string, string> = {
     orders: `Orders (${d.transport.toUpperCase()})`,
     dropcopy: "Drop copy",
@@ -279,16 +292,6 @@ function DeskBar({
       </Button>
       {stale && <span className="text-[11px] text-sell">· lost contact with the quoter, showing the last status</span>}
       <div className="ml-auto flex items-center gap-2">
-        {running && (
-          <Button
-            tone="danger"
-            disabled={control.isPending}
-            onClick={() => control.mutate({ action: "stop" })}
-            title="Stop every book and cancel every order the quoter has resting"
-          >
-            <Square size={12} /> Stop all
-          </Button>
-        )}
         {d.books.some((b) => !b.enabled) && (
           <Button disabled={control.isPending} onClick={() => (live ? setConfirm(true) : control.mutate({ action: "start" }))}>
             <Play size={12} /> Start all
@@ -681,16 +684,8 @@ function ControlBar({ s, live }: { s: QuoterStatus; live: boolean }) {
             <Trash2 size={12} /> Remove
           </Button>
         )}
-        {s.enabled ? (
-          <Button
-            tone="danger"
-            disabled={control.isPending}
-            onClick={() => control.mutate({ action: "stop", symbol })}
-            title="Stop this book and cancel its resting orders"
-          >
-            <Square size={12} /> Stop and pull quotes
-          </Button>
-        ) : (
+        {/* Stopping is up in the header, next to the cancel buttons. */}
+        {!s.enabled && (
           <Button tone="primary" disabled={control.isPending} onClick={() => (live ? setConfirm(true) : control.mutate({ action: "start", symbol }))}>
             <Play size={12} /> Start quoting
           </Button>
