@@ -51,8 +51,8 @@ export function QuoterScreen() {
   const { symbol: shared, setSymbol } = useUi();
   const [picked, setPicked] = useState<string>();
   const [help, setHelp] = useHelpSetting();
-  const [edge, setEdge] = useStoredChoice<"open" | "closed">("cefi-console:quoter-edge", "closed", ["open", "closed"]);
-  const [bulk, setBulk] = useStoredChoice<"open" | "closed">("cefi-console:quoter-bulk", "closed", ["open", "closed"]);
+  // At most one breakdown open at a time; it takes the screen below the bars in place of the books.
+  const [open, setOpen] = useStoredChoice<"none" | "edge" | "params">("cefi-console:quoter-breakdown", "none", ["none", "edge", "params"]);
   const books = desk?.books ?? [];
   const has = (s: string | undefined) => !!s && books.some((b) => b.market.symbol === s);
   // The shared instrument if it's a book; else the last book picked here, or the first one.
@@ -83,22 +83,27 @@ export function QuoterScreen() {
     );
   }
   if (!desk) return <Empty>Connecting to the quoter…</Empty>;
+  // With no books there's nothing to break down.
+  const shownOpen = desk.books.length ? open : "none";
 
   return (
     <ShowHelp.Provider value={help}>
       <div className="flex h-full min-h-0 flex-col gap-2">
         <DeskBar d={desk} stale={!!status.error} help={help} onHelp={setHelp} />
-        <AllBooksBar d={desk} open={edge === "open"} onToggle={(open) => setEdge(open ? "open" : "closed")} />
-        {/* Every book's edge and every trade, opened from the All books bar. */}
-        {edge === "open" && desk.books.length > 0 && (
-          <div className="h-[45vh] shrink-0">
+        <AllBooksBar d={desk} open={shownOpen === "edge"} onToggle={(o) => setOpen(o ? "edge" : "none")} />
+        <ActivityBar d={desk} open={shownOpen === "params"} onToggle={(o) => setOpen(o ? "params" : "none")} />
+        {shownOpen === "edge" && (
+          <div className="min-h-0 flex-1">
             <TradesView />
           </div>
         )}
-        <ActivityBar d={desk} open={bulk === "open"} onToggle={(open) => setBulk(open ? "open" : "closed")} />
-        {bulk === "open" && desk.books.length > 0 && <BulkParams d={desk} />}
-        <Warnings list={desk.warnings} />
-        <div className="min-h-0 flex-1">
+        {shownOpen === "params" && (
+          <div className="min-h-0 flex-1">
+            <BulkParams d={desk} />
+          </div>
+        )}
+        {shownOpen === "none" && <Warnings list={desk.warnings} />}
+        <div className={cx("min-h-0 flex-1", shownOpen !== "none" && "hidden")}>
           <Split id="quoter" orientation="horizontal">
             <Pane id="quoter-left" defaultSize="28" minSize={300}>
               <Split id="quoter-left" orientation="vertical">

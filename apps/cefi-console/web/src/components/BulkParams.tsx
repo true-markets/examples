@@ -112,7 +112,7 @@ export function BulkParams({ d }: { d: QuoterDeskStatus }) {
   return (
     <Panel
       title="Parameters · all books"
-      className="max-h-[50vh]"
+      className="h-full"
       actions={
         <>
           <Button size="xs" tone="ghost" onClick={() => setPicking(!picking)} aria-pressed={picking} title="Choose which parameters show">
