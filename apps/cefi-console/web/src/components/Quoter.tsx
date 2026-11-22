@@ -694,7 +694,7 @@ function ControlBar({ s, live }: { s: QuoterStatus; live: boolean }) {
 
 // The narrowest a card reads well. A pair of cards needs two of these side by side, or it shows one
 // at a time behind tabs.
-const CARD_MIN = 236;
+const CARD_MIN = 280;
 
 // Set by a pair of cards showing one at a time: the card's header shows the pair's tabs in place
 // of its title.
@@ -762,10 +762,10 @@ function CardPair({ id, cards }: { id: string; cards: { key: string; label: stri
 function Row({ label, children, title }: { label: string; children: React.ReactNode; title?: string }) {
   return (
     <>
-      <dt className="text-muted" title={title}>
+      <dt className="whitespace-nowrap text-muted" title={title}>
         {label}
       </dt>
-      <dd className="num text-right">{children}</dd>
+      <dd className="num whitespace-nowrap text-right">{children}</dd>
     </>
   );
 }
@@ -791,9 +791,8 @@ function PricesCard({ s, paper }: { s: QuoterStatus; paper: boolean }) {
         {s.mid ? fmtPrice(s.mid) : "—"}
       </Row>
       <Row label="Skew">{s.skewBps ? `${s.skewBps.toFixed(2)} bps` : "none"}</Row>
-      <Row label="Exchange bid / ask">
+      <Row label="Book bid / ask" title={paper ? "The exchange's best bid and ask; in paper mode, the reference's" : "The exchange's best bid and ask"}>
         <span className="text-buy">{s.bestBid ? fmtPrice(s.bestBid) : "—"}</span> / <span className="text-sell">{s.bestAsk ? fmtPrice(s.bestAsk) : "—"}</span>
-        {paper && <span className="text-faint"> (the reference's, in paper mode)</span>}
       </Row>
     </Card>
   );
@@ -844,25 +843,19 @@ function PositionCard({ s }: { s: QuoterStatus }) {
       <Row label="Since" title="When this book's position started counting: its first start, or the last reset. Carried across quoter restarts">
         {since.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
       </Row>
-      <Row label="Change" title="Bought minus sold since then, against the max position change">
-        {signed(p.qty, 8)} {base}
-        {max > 0 && (
-          <span className="text-faint">
-            {" "}
-            of ±{fmtQty(max)}
-            {s.params.sizeUnit === "quote" ? ` ${quote}` : ""}
-          </span>
-        )}
+      <Row label="Change" title="Bought minus sold since then">
+        {signed(p.qty, 6)} {base}
+      </Row>
+      <Row label="Limit" title="The max position change, each way">
+        {max > 0 ? `±${s.params.sizeUnit === "quote" ? fmtUsd(max) : `${fmtQty(max)} ${base}`}` : "off"}
       </Row>
       <Row label="Avg cost">{Number(p.qty) === 0 ? "—" : fmtPrice(p.avgCost)}</Row>
-      <Row label="Realized PnL">
-        {signed(p.realizedPnl)} {quote}
+      <Row label="Realized PnL">{signedUsd(Number(p.realizedPnl))}</Row>
+      <Row label="Unrealized" title="The open position marked to the reference mid">
+        {signedUsd(Number(p.unrealizedPnl))}
       </Row>
-      <Row label="Unrealized PnL" title="The open position marked to the reference mid">
-        {signed(p.unrealizedPnl)} {quote}
-      </Row>
-      <Row label="Volume">
-        {fmtQty(p.volumeBase)} {base} · {fmtQty(p.volumeQuote, 2)} {quote}
+      <Row label="Volume" title={`${fmtQty(p.volumeBase)} ${base}`}>
+        {fmtUsd(Number(p.volumeQuote))}
       </Row>
     </Card>
   );
@@ -898,16 +891,19 @@ function BalancesCard({ s }: { s: QuoterStatus }) {
   return (
     <Card title="Budget">
       <Row
-        label={`${quote} held / budget`}
-        title="What this book's bids hold now, out of what they may hold: what they hold plus the shared free balance, capped by maxQuoteAlloc"
+        label="Bids"
+        title={`${quote} the bids hold now, out of what they may hold: what they hold plus the shared free balance, capped by Max quote to use`}
       >
         {fmtQty(b.heldQuote, 2)} / {fmtQty(b.budgetQuote, 2)} <BudgetUse held={b.heldQuote} budget={b.budgetQuote} />
       </Row>
-      <Row label={`${base} held / budget`} title="What the asks hold now, out of what they may hold">
-        {fmtQty(b.heldBase)} / {fmtQty(b.budgetBase)} <BudgetUse held={b.heldBase} budget={b.budgetBase} />
+      <Row label="Asks" title={`${base} the asks hold now, out of what they may hold`}>
+        {fmtQty(b.heldBase, 4)} / {fmtQty(b.budgetBase, 4)} <BudgetUse held={b.heldBase} budget={b.budgetBase} />
       </Row>
-      <Row label="Free (shared)" title="Free in the ledger every book draws on">
-        {fmtQty(b.freeQuote, 2)} {quote} · {fmtQty(b.freeBase)} {base}
+      <Row label={`Free ${quote}`} title="Unused in the ledger every book draws on">
+        {fmtUsd(Number(b.freeQuote))}
+      </Row>
+      <Row label={`Free ${base}`} title="Unused in the ledger every book draws on">
+        {fmtQty(b.freeBase, 4)}
       </Row>
       <Row label="Read">{b.readAt ? new Date(b.readAt).toLocaleTimeString() : "not yet"}</Row>
     </Card>
@@ -918,15 +914,15 @@ function ActivityCard({ s }: { s: QuoterStatus }) {
   const st = s.stats;
   return (
     <Card title="Activity">
-      <Row label="Requests" title="Since this book was added">
-        {st.creates} new · <span className="text-info">{st.modifies} modify</span> · {st.cancels} cancel
+      <Row label="New / modify / cancel" title="Requests sent">
+        {st.creates} / <span className="text-info">{st.modifies}</span> / {st.cancels}
       </Row>
       <Row label="Fills / rejects">
         <span className="text-buy">{st.fills}</span> / <span className={st.rejects ? "text-sell" : ""}>{st.rejects}</span>
         {st.errors > 0 && <span className="text-sell"> · {st.errors} errors</span>}
       </Row>
-      <Row label="Takes" title="IOC orders sent to cross the spread (profit taker and takeout), and how many traded">
-        {st.takes} sent · <span className={st.takeFills ? "text-buy" : ""}>{st.takeFills} filled</span>
+      <Row label="Takes / filled" title="IOC orders sent to cross the spread (profit taker and takeout), and how many traded">
+        {st.takes} / <span className={st.takeFills ? "text-buy" : ""}>{st.takeFills}</span>
       </Row>
       <Row label="Modify share" title="Of the requests that changed a resting order, how many were modifies rather than cancels">
         {st.modifies + st.cancels ? `${Math.round((100 * st.modifies) / (st.modifies + st.cancels))}%` : "—"}
@@ -1421,8 +1417,8 @@ function TakeSideRow({ t, base }: { t: QuoterTakeSide; base: string }) {
   const valueUsd = t.price ? Number(t.qty) * Number(t.price) : 0;
   return (
     <div className="num text-xs">
-      <div className="flex items-baseline gap-2">
-        <span className="text-muted">{t.side === "SELL" ? "Hit the bid" : "Take the ask"}</span>
+      <div className="flex items-baseline gap-2 whitespace-nowrap">
+        <span className="text-muted">{t.side === "SELL" ? "Hit bid" : "Lift ask"}</span>
         <span className={cx("text-[10px]", t.enabled ? "text-faint" : "text-faint line-through")} title={t.enabled ? undefined : "off"}>
           {t.kind}
         </span>
@@ -1440,7 +1436,7 @@ function TakeSideRow({ t, base }: { t: QuoterTakeSide; base: string }) {
         <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-raised" title={`edge ${edge?.toFixed(1) ?? "—"} of ${need.toFixed(1)} bps needed`}>
           <span className={cx("block h-full rounded-full", ready ? "bg-buy" : fill >= 1 ? "bg-accent" : "bg-info")} style={{ width: `${fill * 100}%` }} />
         </span>
-        <span className="text-[11px]">
+        <span className="whitespace-nowrap text-[11px]">
           {bps(edge)} <span className="text-faint">/ {need.toFixed(1)} bps</span>
         </span>
       </div>
