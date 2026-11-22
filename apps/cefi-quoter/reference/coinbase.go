@@ -142,6 +142,8 @@ func (t *Coinbase) session(ctx context.Context) error {
 			Reason    string `json:"reason"`
 			ProductID string `json:"product_id"`
 			BestBid   string `json:"best_bid"`
+			BidSize   string `json:"best_bid_size"`
+			AskSize   string `json:"best_ask_size"`
 			BestAsk   string `json:"best_ask"`
 		}
 		if json.Unmarshal(raw, &m) != nil {
@@ -173,6 +175,8 @@ func (t *Coinbase) session(ctx context.Context) error {
 			}
 			now := time.Now()
 			tick := Tick{Reference: m.ProductID, Mid: bid.Add(ask).Div(decimal.NewFromInt(2)), Bid: bid, Ask: ask, Time: now, Seen: now}
+			tick.BidSize, _ = decimal.NewFromString(m.BidSize)
+			tick.AskSize, _ = decimal.NewFromString(m.AskSize)
 			t.mu.Lock()
 			if t.last == nil {
 				t.last = map[string]Tick{}

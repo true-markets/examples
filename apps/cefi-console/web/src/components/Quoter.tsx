@@ -1,5 +1,5 @@
 import { CircleAlert, CircleHelp, Play, Plus, RotateCcw, Square, Trash2 } from "lucide-react";
-import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, Fragment, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
 import { Panel as Pane } from "react-resizable-panels";
 import { Divider, pane, Split } from "./Layout.tsx";
 import type { QuoterBookSummary, QuoterDeskStatus, QuoterOrder, QuoterParamSpec, QuoterParams, QuoterStatus, QuoterTarget } from "../../../shared/api.ts";
@@ -541,14 +541,8 @@ function PricesCard({ s, paper }: { s: QuoterStatus; paper: boolean }) {
       </Row>
       <Row label="Skew">{s.skewBps ? `${s.skewBps.toFixed(2)} bps` : "none"}</Row>
       <Row label="Exchange bid / ask">
-        {paper ? (
-          <span className="text-faint">none in paper mode</span>
-        ) : (
-          <>
-            <span className="text-buy">{s.bestBid ? fmtPrice(s.bestBid) : "—"}</span> /{" "}
-            <span className="text-sell">{s.bestAsk ? fmtPrice(s.bestAsk) : "—"}</span>
-          </>
-        )}
+        <span className="text-buy">{s.bestBid ? fmtPrice(s.bestBid) : "—"}</span> / <span className="text-sell">{s.bestAsk ? fmtPrice(s.bestAsk) : "—"}</span>
+        {paper && <span className="text-faint"> (the reference's, in paper mode)</span>}
       </Row>
     </Card>
   );
@@ -618,6 +612,9 @@ function ActivityCard({ s }: { s: QuoterStatus }) {
       <Row label="Fills / rejects">
         <span className="text-buy">{st.fills}</span> / <span className={st.rejects ? "text-sell" : ""}>{st.rejects}</span>
         {st.errors > 0 && <span className="text-sell"> · {st.errors} errors</span>}
+      </Row>
+      <Row label="Takes" title="IOC orders sent to cross the spread (profit taker and takeout), and how many traded">
+        {st.takes} sent · <span className={st.takeFills ? "text-buy" : ""}>{st.takeFills} filled</span>
       </Row>
       <Row label="Modify share" title="Of the requests that changed a resting order, how many were modifies rather than cancels">
         {st.modifies + st.cancels ? `${Math.round((100 * st.modifies) / (st.modifies + st.cancels))}%` : "—"}
@@ -777,7 +774,13 @@ function ParamsPanel({ symbol, s }: { symbol: string; s: QuoterStatus }) {
 
   const apply = () => {
     const patch: QuoterParams = {};
-    for (const spec of changed) patch[spec.key] = spec.type === "decimal" || spec.type === "choice" ? draft[spec.key]!.trim() : Number(draft[spec.key]);
+    for (const spec of changed)
+      patch[spec.key] =
+        spec.type === "boolean"
+          ? draft[spec.key] === "true"
+          : spec.type === "decimal" || spec.type === "choice"
+            ? draft[spec.key]!.trim()
+            : Number(draft[spec.key]);
     update.mutate({ symbol, patch });
   };
 
@@ -845,25 +848,54 @@ function ParamsPanel({ symbol, s }: { symbol: string; s: QuoterStatus }) {
             const dirty = (draft[spec.key] ?? "") !== current[spec.key];
             const unit = unitLabel(spec);
             return (
-              <label key={spec.key} className="grid grid-cols-[minmax(0,1fr)_9rem] items-center gap-3 px-3 py-2">
-                <span className="min-w-0">
-                  <span className={cx("block text-xs font-medium", dirty && "text-info")}>
-                    {spec.label}
-                    {unit && <span className="ml-1 font-normal text-faint">{unit}</span>}
+              <Fragment key={spec.key}>
+                {spec.key === "profitTaker" && (
+                  <div className="bg-raised/40 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted">Taking</div>
+                )}
+                <label className="grid grid-cols-[minmax(0,1fr)_9rem] items-center gap-3 px-3 py-2">
+                  <span className="min-w-0">
+                    <span className={cx("block text-xs font-medium", dirty && "text-info")}>
+                      {spec.label}
+                      {unit && <span className="ml-1 font-normal text-faint">{unit}</span>}
+                    </span>
+                    <Help>
+                      <span className="block text-[11px] leading-snug text-faint">{spec.help}</span>
+                    </Help>
+                    {errors[spec.key] && <span className="block text-[11px] text-sell">{errors[spec.key]}</span>}
                   </span>
-                  <Help>
-                    <span className="block text-[11px] leading-snug text-faint">{spec.help}</span>
-                  </Help>
-                  {errors[spec.key] && <span className="block text-[11px] text-sell">{errors[spec.key]}</span>}
-                </span>
-                <input
-                  className={cx(inputClass, "text-right", dirty && "border-info", errors[spec.key] && "border-sell")}
-                  inputMode="decimal"
-                  value={draft[spec.key] ?? ""}
-                  onChange={(e) => setDraft((d) => ({ ...d, [spec.key]: e.target.value }))}
-                  onKeyDown={(e) => e.key === "Enter" && canApply && apply()}
-                />
-              </label>
+                  {spec.type === "boolean" ? (
+                    <div
+                      className={cx("flex justify-self-end rounded border p-0.5", dirty ? "border-info" : "border-line")}
+                      role="radiogroup"
+                      aria-label={spec.label}
+                    >
+                      {(["true", "false"] as const).map((v) => (
+                        <button
+                          key={v}
+                          type="button"
+                          role="radio"
+                          aria-checked={draft[spec.key] === v}
+                          onClick={() => setDraft((d) => ({ ...d, [spec.key]: v }))}
+                          className={cx(
+                            "rounded px-2 py-0.5 text-[11px] font-semibold",
+                            draft[spec.key] === v ? "bg-raised text-ink" : "text-muted hover:text-ink",
+                          )}
+                        >
+                          {v === "true" ? "On" : "Off"}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <input
+                      className={cx(inputClass, "text-right", dirty && "border-info", errors[spec.key] && "border-sell")}
+                      inputMode="decimal"
+                      value={draft[spec.key] ?? ""}
+                      onChange={(e) => setDraft((d) => ({ ...d, [spec.key]: e.target.value }))}
+                      onKeyDown={(e) => e.key === "Enter" && canApply && apply()}
+                    />
+                  )}
+                </label>
+              </Fragment>
             );
           })}
         </div>
@@ -889,6 +921,7 @@ export function convertSize(raw: string, price: number, to: "base" | "quote"): s
 
 // The quoter checks again and has the last word; this just catches typos before a round trip.
 export function validate(spec: QuoterParamSpec, raw: string): string | undefined {
+  if (spec.type === "boolean") return raw === "true" || raw === "false" ? undefined : "on or off";
   if (spec.type === "choice") return spec.options?.includes(raw) ? undefined : `one of ${spec.options?.join(", ")}`;
   const v = raw.trim();
   if (!/^-?\d+(\.\d+)?$/.test(v)) return "enter a number";
@@ -904,6 +937,7 @@ export function validate(spec: QuoterParamSpec, raw: string): string | undefined
 function EventsPanel({ s }: { s: QuoterStatus }) {
   const tone: Record<string, string> = {
     fill: "text-buy",
+    take: "text-accent",
     reject: "text-sell",
     warn: "text-accent",
     param: "text-info",

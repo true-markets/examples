@@ -35,3 +35,12 @@ describe("switching size units", () => {
     expect(validate(unit, "usd")).toBe("one of base, quote");
   });
 });
+
+describe("on/off settings", () => {
+  it("accept only on or off", () => {
+    const spec = { key: "profitTaker", label: "Profit taker", type: "boolean" as const, help: "" };
+    expect(validate(spec, "true")).toBeUndefined();
+    expect(validate(spec, "false")).toBeUndefined();
+    expect(validate(spec, "yes")).toBe("on or off");
+  });
+});

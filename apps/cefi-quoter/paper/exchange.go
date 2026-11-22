@@ -4,6 +4,10 @@
 // is at or above it). Balances and holds are simulated the way the exchange does them, shared by
 // every book, including rejecting an order or a modify that needs more than is free.
 //
+// The exchange's best bid and offer are the reference's (with its sizes), published as EBBO the
+// way the WebSocket does. A take (IOC) fills against them at once, up to the size shown, and the
+// rest is canceled.
+//
 // It answers every request with the same drop-copy messages the real exchange sends, so the
 // quoter runs exactly the code it runs live.
 package paper
@@ -53,6 +57,8 @@ type Exchange struct {
 	QuoteAsset string
 	// OnDropCopy receives every drop copy, as the WebSocket would deliver it.
 	OnDropCopy func(tm.Message)
+	// OnMarket receives an EBBO update for each book on every reference tick.
+	OnMarket func(tm.Message)
 	// Latency between a request and its drop copy.
 	Latency time.Duration
 
@@ -60,6 +66,13 @@ type Exchange struct {
 	balances map[string]decimal.Decimal
 	orders   map[string]*order
 	nextID   int
+	last     map[string]reference.Tick // by symbol: the book a take fills against
+	outbox   chan delivery             // drop copies, delivered in the order they happened
+}
+
+type delivery struct {
+	msg tm.Message
+	at  time.Time
 }
 
 // New makes a paper exchange with these starting balances, by asset symbol. Every other asset is
@@ -69,7 +82,7 @@ func New(quoteAsset string, balances map[string]decimal.Decimal) *Exchange {
 	for k, v := range balances {
 		b[k] = v
 	}
-	return &Exchange{QuoteAsset: quoteAsset, balances: b, orders: map[string]*order{}, Latency: 20 * time.Millisecond}
+	return &Exchange{QuoteAsset: quoteAsset, balances: b, orders: map[string]*order{}, last: map[string]reference.Tick{}, Latency: 20 * time.Millisecond}
 }
 
 // InstrumentID is the made-up instrument id for a paper book.
@@ -127,6 +140,10 @@ func (b *book) Create(_ context.Context, o *quoter.Order) (string, error) {
 	}
 	x.nextID++
 	n.id = strconv.Itoa(x.nextID)
+	if o.Take {
+		x.takeLocked(n)
+		return n.id, nil
+	}
 	x.orders[n.externalID] = n
 	x.emitLocked(n, "NEW", "ACTIVE", "", nil)
 	return n.id, nil
@@ -171,10 +188,66 @@ func (b *book) Cancel(_ context.Context, externalID, _, _ string) error {
 	return nil
 }
 
-// OnTick fills every order on symbol that the Coinbase market has traded through.
+// takeLocked fills an IOC against the reference's best price on the other side, up to the size
+// shown there, and cancels the rest. It never rests.
+func (x *Exchange) takeLocked(n *order) {
+	t, ok := x.last[n.symbol]
+	px, size := t.Ask, t.AskSize
+	if n.side == "SELL" {
+		px, size = t.Bid, t.BidSize
+	}
+	crosses := ok && px.IsPositive() && ((n.side == "BUY" && px.LessThanOrEqual(n.price)) || (n.side == "SELL" && px.GreaterThanOrEqual(n.price)))
+	if crosses {
+		qty := decimal.Min(n.qty, size)
+		if qty.IsPositive() {
+			// Filled at the order's price, which a take sets to the best price it saw.
+			notional := qty.Mul(n.price)
+			if n.side == "BUY" {
+				x.balances[n.base], x.balances[n.quote] = x.balances[n.base].Add(qty), x.balances[n.quote].Sub(notional)
+			} else {
+				x.balances[n.base], x.balances[n.quote] = x.balances[n.base].Sub(qty), x.balances[n.quote].Add(notional)
+			}
+			n.executed = qty
+			status := "PARTIAL"
+			if qty.Equal(n.qty) {
+				status = "FILLED"
+			}
+			x.emitLocked(n, "TRADE", status, "", &qty)
+			if status == "FILLED" {
+				return
+			}
+		}
+	}
+	x.emitLocked(n, "CANCELED", "CANCELED", "IOC: nothing left to fill against", nil)
+}
+
+// OnTick publishes symbol's EBBO from the reference and fills every resting order the reference
+// market has traded through.
 func (x *Exchange) OnTick(symbol string, t reference.Tick) {
+	// The EBBO goes out after the lock is released, in tick order.
+	var ebbo *tm.Message
+	defer func() {
+		if ebbo != nil {
+			x.OnMarket(*ebbo)
+		}
+	}()
 	x.mu.Lock()
 	defer x.mu.Unlock()
+	x.last[symbol] = t
+	if x.OnMarket != nil && t.Bid.IsPositive() && t.Ask.IsPositive() {
+		var e tm.EBBO
+		e.Symbol = symbol
+		e.Info.BestBid = &struct {
+			Price string `json:"price"`
+			Qty   string `json:"qty"`
+		}{t.Bid.String(), t.BidSize.String()}
+		e.Info.BestAsk = &struct {
+			Price string `json:"price"`
+			Qty   string `json:"qty"`
+		}{t.Ask.String(), t.AskSize.String()}
+		raw, _ := json.Marshal(e)
+		ebbo = &tm.Message{Channel: "EBBO", Data: raw}
+	}
 	for id, o := range x.orders {
 		if o.symbol != symbol {
 			continue
@@ -214,11 +287,18 @@ func (x *Exchange) emitLocked(o *order, event, status, text string, tradeQty *de
 	if x.OnDropCopy == nil {
 		return
 	}
-	// Delivered later, on another goroutine, the way the WebSocket would.
-	go func() {
-		time.Sleep(x.Latency)
-		x.OnDropCopy(msg)
-	}()
+	// Delivered later, on another goroutine, the way the WebSocket would, and in order: an IOC's
+	// fill has to arrive before its cancel, as it does on the real exchange.
+	if x.outbox == nil {
+		x.outbox = make(chan delivery, 4096)
+		go func(out <-chan delivery, deliver func(tm.Message)) {
+			for d := range out {
+				time.Sleep(time.Until(d.at))
+				deliver(d.msg)
+			}
+		}(x.outbox, x.OnDropCopy)
+	}
+	x.outbox <- delivery{msg: msg, at: time.Now().Add(x.Latency)}
 }
 
 func (x *Exchange) Balances(context.Context) (*tm.Balances, error) {

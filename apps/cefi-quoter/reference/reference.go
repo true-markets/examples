@@ -28,6 +28,8 @@ type Tick struct {
 	Mid       decimal.Decimal
 	Bid       decimal.Decimal
 	Ask       decimal.Decimal
+	BidSize   decimal.Decimal // at the best bid and ask, in the base asset, where the source says
+	AskSize   decimal.Decimal
 	Time      time.Time
 	Seen      time.Time
 	Heartbeat bool // repeats the last price; nothing traded

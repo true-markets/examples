@@ -31,6 +31,15 @@ type Params struct {
 	MaxBaseAlloc       decimal.Decimal `json:"maxBaseAlloc" param:"Max base to use|size|Most of the base asset the asks may hold at once. 0 means all of the free balance|0|"`
 	RefStaleMs         int             `json:"refStaleMs" param:"Reference stale after|ms|Pull every quote if the reference price is older than this|500|60000"`
 	MinRequoteMs       int             `json:"minRequoteMs" param:"Min requote interval|ms|Smallest gap between two rounds of order changes|0|10000"`
+
+	// Taking: crossing the spread with an IOC instead of waiting to be filled. See taker.go.
+	ProfitTaker         bool            `json:"profitTaker" param:"Profit taker||Cross the spread to close inventory when the exchange's book pays enough over the skewed mid, and only above what the position cost. The edge it needs falls toward the flatten floor as the position nears the max position change, so a full book gets out more readily||"`
+	Takeout             bool            `json:"takeout" param:"Takeout||Cross the spread to build inventory when the exchange's book sits at least the take edge past fair value. Opportunistic: it bets the dislocation closes. Off unless you turn it on||"`
+	TakeEdgeBps         float64         `json:"takeEdgeBps" param:"Take edge|bps|Net edge over the skewed mid, after the taker fee, that a take needs. Takeout needs more as the position grows|0|10000"`
+	TakeFlattenFloorBps float64         `json:"takeFlattenFloorBps" param:"Flatten floor|bps|The least net edge a profit take accepts, reached at the max position change|0|10000"`
+	TakeMaxSize         decimal.Decimal `json:"takeMaxSize" param:"Max take size|size|Largest single take|0|"`
+	TakeCoolDownMs      int             `json:"takeCoolDownMs" param:"Take cool-down|ms|Least time between two takes on this book, so one move isn't chased over and over|0|600000"`
+	TakerFeeBps         float64         `json:"takerFeeBps" param:"Taker fee|bps|What the exchange charges you to take. Every take edge is counted after it. The published CeFi schedule is 0|0|1000"`
 }
 
 // Size units. Quote size, max position change and max base to use are in one or the other.
@@ -48,12 +57,13 @@ func (p Params) InBase(price decimal.Decimal) Params {
 	}
 	if !price.IsPositive() {
 		// No price, no conversion: size nothing rather than misread dollars as coins.
-		p.QuoteSize, p.MaxPosition, p.MaxBaseAlloc = decimal.Zero, decimal.Zero, decimal.Zero
+		p.QuoteSize, p.MaxPosition, p.MaxBaseAlloc, p.TakeMaxSize = decimal.Zero, decimal.Zero, decimal.Zero, decimal.Zero
 		return p
 	}
 	p.QuoteSize = p.QuoteSize.Div(price)
 	p.MaxPosition = p.MaxPosition.Div(price)
 	p.MaxBaseAlloc = p.MaxBaseAlloc.Div(price)
+	p.TakeMaxSize = p.TakeMaxSize.Div(price)
 	p.SizeUnit = SizeInBase
 	return p
 }
@@ -85,6 +95,10 @@ func Schema() []ParamSpec {
 			spec.Type = "integer"
 		case reflect.Float64:
 			spec.Type = "number"
+		case reflect.Bool:
+			spec.Type = "boolean"
+			out = append(out, spec)
+			continue
 		case reflect.String:
 			spec.Type = "choice"
 			spec.Options = strings.Split(parts[3], ",")
@@ -115,6 +129,8 @@ func (p Params) Validate() error {
 		f := v.Field(i)
 		var x float64
 		switch spec.Type {
+		case "boolean":
+			continue
 		case "choice":
 			if !slices.Contains(spec.Options, f.String()) {
 				return fmt.Errorf("%s must be one of %s", spec.Key, strings.Join(spec.Options, ", "))

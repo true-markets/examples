@@ -21,9 +21,9 @@ One quoter runs every book, all on one shared view of the account's balances. Th
 | **Prices** | The reference price and its age, the mid after inventory skew, the exchange's best bid and ask | |
 | **Position** | The change in holdings since the quoter started (bought minus sold) against the max position change, average cost, realized and unrealized PnL, volume | |
 | **Budget** | What this book's bids and asks hold, out of what they may hold, and the shared free balance | |
-| **Activity** | Creates, modifies and cancels sent, fills, rejects, and how many order changes were modifies | |
+| **Activity** | Creates, modifies and cancels sent, fills, rejects, takes (IOCs crossing the spread) sent and filled, and how many order changes were modifies | |
 | **Ladder** | Each level's target next to the order resting there, with an arrow while a modify is in flight. Before you start, it previews what would be quoted | |
-| **Parameters** | Every strategy setting for this book, with its unit and what it does | Edit any of them and press Apply; the book uses them on its next cycle, and the quoter saves them |
+| **Parameters** | Every strategy setting for this book, with its unit and what it does, including the profit taker and takeout switches under Taking | Edit any of them and press Apply; the book uses them on its next cycle, and the quoter saves them |
 | **Events** | Fills, rejects, parameter changes and connection changes as they happen | |
 
 The browser reads `/api/quoter/*` on this server, which calls the quoter (`server/quoter.ts`). If the quoter isn't running, the screen says so and how to start it.

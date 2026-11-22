@@ -347,21 +347,22 @@ type NewOrder struct {
 	Side         string // BUY or SELL
 	Price        string
 	Qty          string
-	PostOnly     bool
+	PostOnly     bool // ALO: rest only, never take
+	IOC          bool // immediate or cancel: take what's there now, cancel the rest
 }
 
-// CreateOrder sends a GTC limit order and returns the exchange's order id.
+// CreateOrder sends a limit order (GTC, or IOC for a take) and returns the exchange's order id.
 func (c *REST) CreateOrder(ctx context.Context, o NewOrder) (string, error) {
 	info := map[string]any{
 		"client_id":     o.ClientID,
 		"instrument_id": o.InstrumentID,
 		"side":          o.Side,
 		"type":          "LIMIT",
-		"tif":           "GTC",
+		"tif":           tif(o.IOC),
 		"qty":           o.Qty,
 		"price":         o.Price,
 	}
-	if o.PostOnly {
+	if o.PostOnly && !o.IOC {
 		// Add Liquidity Only: the exchange rejects the order rather than let it take.
 		info["exec_inst_flags"] = []string{"ALO"}
 	}
@@ -391,4 +392,11 @@ func (c *REST) ModifyOrder(ctx context.Context, clientID, externalID, price, qty
 // CancelOrder cancels by our external_id (DELETE /orders/{id}?id_type=client).
 func (c *REST) CancelOrder(ctx context.Context, externalID string) error {
 	return c.do(ctx, http.MethodDelete, "/orders/"+url.PathEscape(externalID), url.Values{"id_type": {"client"}}, nil, nil)
+}
+
+func tif(ioc bool) string {
+	if ioc {
+		return "IOC"
+	}
+	return "GTC"
 }

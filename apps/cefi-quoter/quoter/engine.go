@@ -80,7 +80,10 @@ type Engine struct {
 	ref         *reference.Tick
 	bestBid     *decimal.Decimal
 	bestAsk     *decimal.Decimal
+	bestBidQty  decimal.Decimal
+	bestAskQty  decimal.Decimal
 	ebboAt      time.Time
+	lastTake    time.Time
 	conns       map[string]*ConnState
 	budgetBase  decimal.Decimal
 	budgetQuote decimal.Decimal
@@ -109,11 +112,14 @@ type Stats struct {
 	Rejects  int `json:"rejects"`
 	Errors   int `json:"errors"`
 	Fills    int `json:"fills"`
+	// Takes is IOC orders sent to cross the spread; TakeFills is how many of them traded.
+	Takes     int `json:"takes"`
+	TakeFills int `json:"takeFills"`
 }
 
 type Event struct {
 	Time    time.Time `json:"time"`
-	Kind    string    `json:"kind"` // info, warn, fill, reject, param
+	Kind    string    `json:"kind"` // info, warn, fill, take, reject, param
 	Message string    `json:"message"`
 }
 
@@ -177,26 +183,38 @@ func (e *Engine) OnEBBO(d tm.EBBO) {
 	}
 	e.mu.Lock()
 	e.bestBid, e.bestAsk = parse(d.Info.BestBid), parse(d.Info.BestAsk)
+	e.bestBidQty, e.bestAskQty = decimal.Zero, decimal.Zero
+	if e.bestBid != nil {
+		e.bestBidQty = dec(d.Info.BestBid.Qty)
+	}
+	if e.bestAsk != nil {
+		e.bestAskQty = dec(d.Info.BestAsk.Qty)
+	}
 	e.ebboAt = time.Now()
 	e.mu.Unlock()
 }
 
 // OnDropCopy takes one drop copy for this book's instrument.
 func (e *Engine) OnDropCopy(d tm.DropCopy) {
-	res := e.book.ApplyDropCopy(d)
 	e.log.Debug("drop copy", "event", d.EventType, "status", d.Status, "external_id", d.ExternalID, "price", d.Price, "qty", d.Quantity, "leaves", d.LeavesQty)
 
+	// The order book, the position and the shared balance move together: a cycle (or another
+	// book) never sees a fill's order gone with its position or its cost not yet counted.
 	e.mu.Lock()
-	if res.Fill != nil {
-		e.applyFillLocked(*res.Fill)
-	}
+	var res DropCopyResult
+	e.ledger.Atomically(func(debit func(string, decimal.Decimal)) {
+		res = e.book.ApplyDropCopy(d)
+		if res.Fill != nil {
+			e.applyFillLocked(*res.Fill, debit)
+		}
+	})
 	if res.Reject != "" {
 		e.stats.Rejects++
 		e.cooldown[cooldownKey(res.Side, res.Level)] = time.Now().Add(rejectCooldown)
 		if isBalanceReject(res.Reject) {
 			e.ledger.MarkDirty()
 		}
-		e.eventLocked("reject", fmt.Sprintf("%s L%d rejected: %s", res.Side, res.Level, res.Reject))
+		e.eventLocked("reject", fmt.Sprintf("%s %s rejected: %s", res.Side, levelName(res.Level), res.Reject))
 	}
 	if res.Orphan != "" {
 		e.orphans = append(e.orphans, res.Orphan)
@@ -355,10 +373,19 @@ func (e *Engine) cycle(ctx context.Context) {
 		e.mu.Unlock()
 		return
 	}
+	orders := e.book.Snapshot()
+	// A take goes first: it decides whether to cross before the ladder spends the free balance.
+	take := e.takeLocked(p, ladder.Mid, orders)
+	quotes := orders[:0:0]
+	for _, o := range orders {
+		if !o.Take {
+			quotes = append(quotes, o) // takes are IOCs: the ladder neither moves nor cancels them
+		}
+	}
 	in := PlanInput{
 		Bids:         ladder.Bids,
 		Asks:         ladder.Asks,
-		Orders:       e.book.Snapshot(),
+		Orders:       quotes,
 		BestBid:      e.bestBid,
 		BestAsk:      e.bestAsk,
 		ThresholdBps: p.ModifyThresholdBps,
@@ -367,7 +394,17 @@ func (e *Engine) cycle(ctx context.Context) {
 	steps := Plan(in)
 	e.mu.Unlock()
 
+	if take != nil {
+		e.executeTake(ctx, take, quotes)
+		// The take just changed what's free and what's resting: plan again on the next cycle.
+		steps = nil
+	}
 	if len(steps) == 0 {
+		if take != nil {
+			e.mu.Lock()
+			e.lastSend = time.Now()
+			e.mu.Unlock()
+		}
 		return
 	}
 	e.execute(ctx, steps)
@@ -508,12 +545,14 @@ func (e *Engine) execute(ctx context.Context, steps []Step) {
 func (e *Engine) after(s Step, externalID string, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	switch s.Kind {
-	case Create:
+	switch {
+	case s.Level == TakeLevel:
+		// counted in stats.Takes when sent
+	case s.Kind == Create:
 		e.stats.Creates++
-	case Modify:
+	case s.Kind == Modify:
 		e.stats.Modifies++
-	case Cancel:
+	case s.Kind == Cancel:
 		e.stats.Cancels++
 	}
 	if err == nil {
@@ -535,7 +574,7 @@ func (e *Engine) after(s Step, externalID string, err error) {
 		}
 	}
 	// What was asked for goes in the log too: a refusal usually comes down to the price or size.
-	what := fmt.Sprintf("%s %s L%d", s.Kind, s.Side, s.Level)
+	what := fmt.Sprintf("%s %s %s", s.Kind, s.Side, levelName(s.Level))
 	if s.Kind != Cancel {
 		what += fmt.Sprintf(" %s @ %s", s.Qty, s.Price)
 	}
@@ -547,7 +586,7 @@ func (e *Engine) after(s Step, externalID string, err error) {
 func (e *Engine) pullQuotes(ctx context.Context, reason string) {
 	var steps []Step
 	for _, o := range e.book.Snapshot() {
-		if o.InFlight == None {
+		if o.InFlight == None && !o.Take {
 			steps = append(steps, Step{Kind: Cancel, ExternalID: o.ExternalID, Side: o.Side, Level: o.Level, Reason: reason})
 		}
 	}
@@ -599,13 +638,17 @@ func (e *Engine) maybeResync(ctx context.Context) {
 		e.log.Warn("resync failed", "err", err)
 		return
 	}
-	fills, orphans := e.book.Resync(active, stuckAfter)
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	var orphans []string
+	e.ledger.Atomically(func(debit func(string, decimal.Decimal)) {
+		var fills []Fill
+		fills, orphans = e.book.Resync(active, stuckAfter)
+		for _, f := range fills {
+			e.applyFillLocked(f, debit)
+		}
+	})
 	e.needResync = false
-	for _, f := range fills {
-		e.applyFillLocked(f)
-	}
 	e.orphans = append(e.orphans, orphans...)
 	e.eventLocked("info", fmt.Sprintf("read back %d resting orders", e.book.Len()))
 }
@@ -653,17 +696,20 @@ func (p *position) apply(side Side, qty, price decimal.Decimal) {
 	}
 }
 
-func (e *Engine) applyFillLocked(f Fill) {
+func (e *Engine) applyFillLocked(f Fill, debit func(assetID string, amount decimal.Decimal)) {
 	e.pos.apply(f.Side, f.Qty, f.Price)
 	e.stats.Fills++
+	if f.Level == TakeLevel {
+		e.stats.TakeFills++
+	}
 	// Debit what the fill spent, so no book is sized against funds that are gone. Never credit
 	// what it bought until the next balance read: it can land unsettled.
 	if f.Side == Buy {
-		e.ledger.Debit(e.market.QuoteAssetID, f.Qty.Mul(f.Price))
+		debit(e.market.QuoteAssetID, f.Qty.Mul(f.Price))
 	} else {
-		e.ledger.Debit(e.market.BaseAssetID, f.Qty)
+		debit(e.market.BaseAssetID, f.Qty)
 	}
-	e.eventLocked("fill", fmt.Sprintf("%s %s %s @ %s (L%d)", f.Side, f.Qty, e.market.BaseSymbol, f.Price, f.Level))
+	e.eventLocked("fill", fmt.Sprintf("%s %s %s @ %s (%s)", f.Side, f.Qty, e.market.BaseSymbol, f.Price, levelName(f.Level)))
 	e.log.Info("fill", "side", f.Side, "qty", f.Qty, "price", f.Price, "level", f.Level, "position", e.pos.qty)
 }
 
@@ -698,6 +744,13 @@ func fit(side Side, price, want, current, room decimal.Decimal) decimal.Decimal 
 	return formatSize(price, decimal.Min(want, limit), IncrementsFor(price))
 }
 
+func levelName(level int) string {
+	if level == TakeLevel {
+		return "take"
+	}
+	return fmt.Sprintf("L%d", level)
+}
+
 func cooldownKey(side Side, level int) string { return fmt.Sprintf("%s:%d", side, level) }
 
 func isBalanceReject(text string) bool {
@@ -726,4 +779,102 @@ func diffParams(a, b Params) []string {
 		}
 	}
 	return out
+}
+
+// --- taking (see taker.go) -------------------------------------------------------------------
+
+// takeLocked decides whether to cross this cycle. One take at a time, and none within the
+// cool-down of the last.
+func (e *Engine) takeLocked(set Params, mid decimal.Decimal, orders []Order) *takeDecision {
+	if (!set.ProfitTaker && !set.Takeout) || e.ref == nil || !mid.IsPositive() {
+		return nil
+	}
+	if time.Since(e.lastTake) < time.Duration(set.TakeCoolDownMs)*time.Millisecond {
+		return nil
+	}
+	for _, o := range orders {
+		if o.Take {
+			return nil // the last one hasn't been settled yet
+		}
+	}
+	// What other people show at the best prices: our own quotes there aren't liquidity we can take.
+	external := func(best *decimal.Decimal, qty decimal.Decimal, side Side) decimal.Decimal {
+		if best == nil {
+			return decimal.Zero
+		}
+		for _, o := range orders {
+			if o.Side == side && o.EffectivePrice().Equal(*best) {
+				qty = qty.Sub(o.EffectiveLeaves())
+			}
+		}
+		return decimal.Max(qty, decimal.Zero)
+	}
+	return decideTake(takeInput{
+		Params:    set.InBase(e.ref.Mid),
+		Mid:       mid,
+		Position:  e.pos.qty,
+		AvgCost:   e.pos.avgCost,
+		BestBid:   e.bestBid,
+		BestAsk:   e.bestAsk,
+		BidQty:    external(e.bestBid, e.bestBidQty, Buy),
+		AskQty:    external(e.bestAsk, e.bestAskQty, Sell),
+		FreeBase:  e.ledger.Free(e.market.BaseAssetID),
+		FreeQuote: e.ledger.Free(e.market.QuoteAssetID),
+	})
+}
+
+// executeTake sends a take as an IOC, after reserving its funds like any order. If a profit take
+// has the edge but our own quotes on that side hold everything, it pulls the outermost of them
+// first; the take goes out on a later cycle, once the cancel has freed the funds.
+func (e *Engine) executeTake(ctx context.Context, d *takeDecision, quotes []Order) {
+	if d.Unfunded {
+		var outer *Order
+		for i := range quotes {
+			o := &quotes[i]
+			if o.Side != d.Side {
+				continue
+			}
+			if o.InFlight == Cancel {
+				return // already freeing funds
+			}
+			if o.InFlight == None && (outer == nil || o.Level > outer.Level) {
+				outer = o
+			}
+		}
+		if outer == nil {
+			return
+		}
+		e.mu.Lock()
+		e.eventLocked("info", fmt.Sprintf("%s %s: pulling %s L%d to free funds", d.Kind, d.Side, outer.Side, outer.Level))
+		e.mu.Unlock()
+		e.execute(ctx, []Step{{Kind: Cancel, ExternalID: outer.ExternalID, Side: outer.Side, Level: outer.Level, Reason: "freeing funds for a profit take"}})
+		return
+	}
+	set := e.Params()
+	asset, alloc := e.market.QuoteAssetID, set.MaxQuoteAlloc
+	if d.Side == Sell {
+		asset, alloc = e.market.BaseAssetID, set.InBase(d.Price).MaxBaseAlloc
+	}
+	if d.Kind == ProfitTake {
+		alloc = decimal.Zero // getting out isn't held to the book's allocation, only to what's free
+	}
+	var o *Order
+	e.ledger.Reserve(e.book, asset, alloc, func(room decimal.Decimal) {
+		if qty := fit(d.Side, d.Price, d.Qty, decimal.Zero, room); qty.IsPositive() {
+			o = e.book.BeginTake(d.Side, d.Price, qty)
+		}
+	})
+	if o == nil {
+		return
+	}
+	e.mu.Lock()
+	e.lastTake = time.Now()
+	e.stats.Takes++
+	e.eventLocked("take", fmt.Sprintf("%s %s %s %s @ %s, %.1f bps over the skewed mid", d.Kind, d.Side, o.Qty, e.market.BaseSymbol, o.Price, d.EdgeBps))
+	e.mu.Unlock()
+	id, err := e.tx.Create(ctx, o)
+	if err == nil && id != "" {
+		e.book.SetOrderID(o.ExternalID, id)
+	}
+	e.after(Step{Kind: Create, Side: d.Side, Level: TakeLevel, Price: o.Price, Qty: o.Qty}, o.ExternalID, err)
 }

@@ -219,6 +219,7 @@ func paperVenue(cfg Config, log *slog.Logger) *venue {
 		done:   done,
 		start: func(_ context.Context, d *quoter.Desk) error {
 			x.OnDropCopy = d.OnDropCopy
+			x.OnMarket = d.OnMarket
 			// The paper exchange is in-process: its drop copy and its market data are always up.
 			d.SetConn(quoter.ConnDropCopy, true, "")
 			d.SetConn(quoter.ConnMarket, true, "")

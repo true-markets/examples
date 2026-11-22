@@ -38,7 +38,8 @@ type Order struct {
 	ExternalID string // our id for the order (its first ClOrdID); the key everywhere
 	OrderID    string // the exchange's id, once we've heard it
 	Side       Side
-	Level      int
+	Level      int  // 0 is the innermost; TakeLevel for a take
+	Take       bool // an IOC that crosses the spread, not a resting quote
 
 	Price    decimal.Decimal // what the exchange has confirmed
 	Qty      decimal.Decimal // the order's total quantity, filled part included
@@ -229,6 +230,20 @@ func (b *Book) Len() int {
 // Every request is recorded BEFORE it is sent. The drop copy for a request can arrive before the
 // request's own HTTP response does (by a fraction of a millisecond), so state set after sending
 // can overwrite an answer that already came in.
+
+// TakeLevel is the level a take order carries: it's not part of the ladder.
+const TakeLevel = -1
+
+// BeginTake registers an IOC take about to be sent. The drop copy settles it like any other order:
+// a fill, then CANCELED for whatever the book didn't have.
+func (b *Book) BeginTake(side Side, price, qty decimal.Decimal) *Order {
+	o := b.BeginCreate(side, TakeLevel, price, qty)
+	b.mu.Lock()
+	b.orders[o.ExternalID].Take = true
+	b.mu.Unlock()
+	o.Take = true
+	return o
+}
 
 // BeginCreate registers a new order about to be sent.
 func (b *Book) BeginCreate(side Side, level int, price, qty decimal.Decimal) *Order {

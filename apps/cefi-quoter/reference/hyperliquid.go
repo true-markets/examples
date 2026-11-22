@@ -198,6 +198,7 @@ func (h *HyperliquidFeed) session(ctx context.Context) error {
 				Time int64  `json:"time"` // block time, ms
 				BBO  []*struct {
 					Px string `json:"px"`
+					Sz string `json:"sz"`
 				} `json:"bbo"`
 			}
 			if json.Unmarshal(m.Data, &d) != nil || len(d.BBO) != 2 || d.BBO[0] == nil || d.BBO[1] == nil {
@@ -211,6 +212,8 @@ func (h *HyperliquidFeed) session(ctx context.Context) error {
 			markUp()
 			now := time.Now()
 			tick := Tick{Reference: Hyperliquid(d.Coin), Mid: bid.Add(ask).Div(decimal.NewFromInt(2)), Bid: bid, Ask: ask, Time: now, Seen: now}
+			tick.BidSize, _ = decimal.NewFromString(d.BBO[0].Sz)
+			tick.AskSize, _ = decimal.NewFromString(d.BBO[1].Sz)
 			h.mu.Lock()
 			h.last[d.Coin] = tick
 			h.mu.Unlock()

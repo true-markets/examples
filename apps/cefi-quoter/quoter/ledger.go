@@ -128,6 +128,20 @@ func (l *Ledger) Debit(assetID string, amount decimal.Decimal) {
 	}
 }
 
+// Atomically runs fn under the ledger's lock, with a debit that works inside it. A drop copy that
+// fills an order changes two things the ledger reads: the order's hold (in its Book) and the
+// spendable balance. Applying both inside one call means no other book sees the hold released
+// before the fill's cost is debited. fn must not call back into the ledger.
+func (l *Ledger) Atomically(fn func(debit func(assetID string, amount decimal.Decimal))) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	fn(func(assetID string, amount decimal.Decimal) {
+		if la := l.assets[assetID]; la != nil {
+			la.spendable = decimal.Max(la.spendable.Sub(amount), decimal.Zero)
+		}
+	})
+}
+
 // MarkDirty asks for a balance read as soon as possible (after a balance rejection).
 func (l *Ledger) MarkDirty() {
 	l.mu.Lock()

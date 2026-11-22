@@ -288,9 +288,14 @@ func (s *Session) parties() []Field {
 	return []Field{{453, "1"}, {448, s.cfg.ClientID}, {452, "3"}}
 }
 
-// NewOrder sends a GTC limit NewOrderSingle (35=D) on symbol (as the exchange names it, e.g.
-// BTC-USDC). postOnly adds ExecInst 6 (Add Liquidity Only).
-func (s *Session) NewOrder(clOrdID, symbol, side, price, qty string, postOnly bool) error {
+// NewOrder sends a limit NewOrderSingle (35=D) on symbol (as the exchange names it, e.g.
+// BTC-USDC). postOnly adds ExecInst 6 (Add Liquidity Only); ioc sends TimeInForce 3 (immediate or
+// cancel) instead of 1 (GTC), for a take.
+func (s *Session) NewOrder(clOrdID, symbol, side, price, qty string, postOnly, ioc bool) error {
+	tif := "1" // GTC
+	if ioc {
+		tif, postOnly = "3", false
+	}
 	fields := []Field{
 		{11, clOrdID},
 		{55, symbol},
@@ -298,7 +303,7 @@ func (s *Session) NewOrder(clOrdID, symbol, side, price, qty string, postOnly bo
 		{38, qty},
 		{40, "2"}, // Limit
 		{44, price},
-		{59, "1"}, // GTC
+		{59, tif},
 	}
 	if postOnly {
 		fields = append(fields, Field{18, "6"})

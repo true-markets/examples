@@ -61,7 +61,8 @@ type OrderStatus struct {
 	ExternalID   string           `json:"externalId"`
 	OrderID      string           `json:"orderId,omitempty"`
 	Side         Side             `json:"side"`
-	Level        int              `json:"level"`
+	Level        int              `json:"level"` // -1 for a take
+	Take         bool             `json:"take,omitempty"`
 	Price        decimal.Decimal  `json:"price"`
 	Qty          decimal.Decimal  `json:"qty"`
 	Leaves       decimal.Decimal  `json:"leaves"`
@@ -124,7 +125,7 @@ func (e *Engine) Status() Status {
 	}
 	for _, o := range orders {
 		os := OrderStatus{
-			ExternalID: o.ExternalID, OrderID: o.OrderID, Side: o.Side, Level: o.Level,
+			ExternalID: o.ExternalID, OrderID: o.OrderID, Side: o.Side, Level: o.Level, Take: o.Take,
 			Price: o.Price, Qty: o.Qty, Leaves: o.Leaves, Executed: o.Executed,
 			PendingPrice: o.PendingPrice, PendingQty: o.PendingQty, Status: o.Status(),
 		}

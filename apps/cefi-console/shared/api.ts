@@ -226,7 +226,7 @@ export interface ApiError {
 export interface QuoterParamSpec {
   key: string;
   label: string;
-  type: "number" | "integer" | "decimal" | "choice";
+  type: "number" | "integer" | "decimal" | "choice" | "boolean";
   // A fixed unit (bps, ms, x), "quote" for the quote currency, or "size" for a size in whichever
   // unit sizeUnit chooses (the base asset or the quote currency).
   unit?: string;
@@ -236,7 +236,7 @@ export interface QuoterParamSpec {
   options?: string[]; // choice only
 }
 
-export type QuoterParams = Record<string, number | string>;
+export type QuoterParams = Record<string, number | string | boolean>;
 
 export interface QuoterParamsResponse {
   params: QuoterParams;
@@ -262,6 +262,7 @@ export interface QuoterOrder {
   pendingQty?: string;
   status: "NEW_PENDING" | "ACTIVE" | "MODIFY_PENDING" | "CANCEL_PENDING";
   pendingMs?: number;
+  take?: boolean; // an IOC crossing the spread (level -1), not a resting quote
 }
 
 export interface QuoterTarget {
@@ -273,7 +274,7 @@ export interface QuoterTarget {
 
 export interface QuoterEvent {
   time: string;
-  kind: "info" | "warn" | "fill" | "reject" | "param";
+  kind: "info" | "warn" | "fill" | "take" | "reject" | "param";
   message: string;
 }
 
@@ -304,7 +305,7 @@ export interface QuoterStatus {
   balances: { freeBase: string; freeQuote: string; budgetBase: string; budgetQuote: string; heldBase: string; heldQuote: string; readAt: string | null };
   orders: QuoterOrder[];
   targets: QuoterTarget[];
-  stats: { creates: number; modifies: number; cancels: number; rejects: number; errors: number; fills: number };
+  stats: { creates: number; modifies: number; cancels: number; rejects: number; errors: number; fills: number; takes: number; takeFills: number };
   events: QuoterEvent[];
   warnings: string[];
 }

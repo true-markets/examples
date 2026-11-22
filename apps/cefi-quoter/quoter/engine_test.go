@@ -23,6 +23,8 @@ type fakeExchange struct {
 	orders   map[string]*fakeOrder // by root external id
 	balances map[string]decimal.Decimal
 	log      []string
+	// ext is other people's best bid and ask (price, qty), which a take fills against.
+	extBid, extBidQty, extAsk, extAskQty decimal.Decimal
 }
 
 type fakeOrder struct {
@@ -84,6 +86,29 @@ func (b *fakeBook) Create(_ context.Context, o *Order) (string, error) {
 	if a, h := n.hold(); h.GreaterThan(f.freeLocked(a)) {
 		f.log = append(f.log, "reject")
 		return "", &tm.APIError{Status: 422, Message: "Insufficient balance"}
+	}
+	if o.Take {
+		f.log = append(f.log, "take")
+		px, avail := f.extAsk, f.extAskQty
+		if o.Side == Sell {
+			px, avail = f.extBid, f.extBidQty
+		}
+		crosses := px.IsPositive() && ((o.Side == Buy && !px.GreaterThan(o.Price)) || (o.Side == Sell && !px.LessThan(o.Price)))
+		if qty := decimal.Min(o.Qty, avail); crosses && qty.IsPositive() {
+			if o.Side == Buy {
+				f.balances[n.base], f.balances[n.quote] = f.balances[n.base].Add(qty), f.balances[n.quote].Sub(qty.Mul(o.Price))
+			} else {
+				f.balances[n.base], f.balances[n.quote] = f.balances[n.base].Sub(qty), f.balances[n.quote].Add(qty.Mul(o.Price))
+			}
+			n.dc.Status, n.dc.EventType, n.dc.ExecutedQty, n.dc.LeavesQty, n.dc.TradePrice = "FILLED", "TRADE", qty.String(), "0", o.Price.String()
+			if qty.LessThan(o.Qty) {
+				n.dc.Status, n.dc.EventType = "CANCELED", "CANCELED" // the rest of the IOC
+			}
+		} else {
+			n.dc.Status, n.dc.EventType, n.dc.LeavesQty = "CANCELED", "CANCELED", "0"
+		}
+		f.send(n.dc)
+		return string(n.dc.OrderID), nil
 	}
 	f.log = append(f.log, "create")
 	f.orders[o.ExternalID] = n
@@ -454,4 +479,83 @@ func TestLedgerReserve(t *testing.T) {
 	if !l.Free("usdc").Equal(d("300")) {
 		t.Fatalf("free after fill %s", l.Free("usdc"))
 	}
+}
+
+func ebbo(desk *Desk, symbol, bid, bidQty, ask, askQty string) {
+	raw, _ := json.Marshal(map[string]any{"symbol": symbol, "info": map[string]any{
+		"best_bid": map[string]string{"price": bid, "qty": bidQty},
+		"best_ask": map[string]string{"price": ask, "qty": askQty},
+	}})
+	desk.OnMarket(tm.Message{Channel: "EBBO", Data: raw})
+}
+
+// A long book whose bids filled, then a buyer far above fair value: the profit taker sells into
+// that bid with an IOC and the position comes back toward flat, without touching our own asks.
+func TestProfitTakerGetsALongBookOut(t *testing.T) {
+	fx := newFake(map[string]string{"btc": "1", "usdc": "100000"})
+	desk := startDesk(t, fx)
+	p := testParams()
+	p.MaxPosition, p.ProfitTaker, p.TakeEdgeBps, p.TakeFlattenFloorBps, p.TakeMaxSize = d("0.004"), true, 25, 2, d("0.01")
+	e := addBook(t, desk, "BTC-USDC", p)
+	ebbo(desk, "BTC-USDC", "49990", "1", "50010", "1")
+	tick(desk, "BTC-USD", "50000")
+	e.SetEnabled(true)
+	waitFor(t, "quoting", func() bool { return fx.resting("") == 6 && settled(e) })
+
+	// Two bids fill: long 0.002, bought just under 50,000.
+	fx.fill("BTC-USDC", Buy)
+	waitFor(t, "first fill", func() bool { return e.Status().Position.Qty.Equal(d("0.001")) && settled(e) })
+	fx.fill("BTC-USDC", Buy)
+	waitFor(t, "long 0.002", func() bool { return e.Status().Position.Qty.Equal(d("0.002")) && settled(e) })
+	if fx.counts()["take"] != 0 {
+		t.Fatal("took with no edge on offer")
+	}
+
+	// Someone bids 50,100 for 0.0015 BTC: 20 bps over fair, well past the 13.5 bps a half-full
+	// book needs. The profit taker sells 0.0015 into it.
+	fx.mu.Lock()
+	fx.extBid, fx.extBidQty = d("50100"), d("0.0015")
+	fx.mu.Unlock()
+	ebbo(desk, "BTC-USDC", "50100", "0.0015", "50110", "1")
+	deadline := time.Now().Add(3 * time.Second)
+	for !(fx.counts()["take"] == 1 && e.Status().Position.Qty.Equal(d("0.0005"))) {
+		if time.Now().After(deadline) {
+			st := e.Status()
+			t.Fatalf("no profit take: counts %v position %s avg %s events %v", fx.counts(), st.Position.Qty, st.Position.AvgCost, st.Events[max(0, len(st.Events)-6):])
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	s := e.Status()
+	if s.Stats.Takes != 1 || s.Stats.TakeFills != 1 || !s.Position.RealizedPnl.IsPositive() {
+		t.Fatalf("takes %d fills %d realized %s", s.Stats.Takes, s.Stats.TakeFills, s.Position.RealizedPnl)
+	}
+	// The cool-down holds the next one off even though the bid is still there.
+	if fx.counts()["take"] != 1 {
+		t.Fatalf("took again inside the cool-down: %v", fx.counts())
+	}
+}
+
+// When our own asks hold every coin we have, an unfunded profit take pulls the outermost ask to
+// free some; the take itself goes out on a later cycle, once the cancel lands.
+func TestUnfundedProfitTakePullsTheOutermostQuote(t *testing.T) {
+	fx := newFake(map[string]string{"btc": "0.003", "usdc": "100000"})
+	desk := startDesk(t, fx)
+	e := addBook(t, desk, "BTC-USDC", testParams())
+	tick(desk, "BTC-USD", "50000")
+	e.SetEnabled(true)
+	waitFor(t, "quoting", func() bool { return fx.resting("") == 6 && settled(e) })
+	e.SetEnabled(false) // hold the loop still: nothing else should send
+	waitFor(t, "stopped", func() bool { return fx.resting("") == 0 && settled(e) })
+	e.SetEnabled(true)
+	waitFor(t, "quoting again", func() bool { return fx.resting("") == 6 && settled(e) })
+	var outer string
+	for _, o := range e.book.Snapshot() {
+		if o.Side == Sell && o.Level == 2 {
+			outer = o.ExternalID
+		}
+	}
+	e.executeTake(context.Background(), &takeDecision{Kind: ProfitTake, Side: Sell, Price: d("50100"), Unfunded: true}, e.book.Snapshot())
+	// That ask is canceled. (The ladder then places a new L2, which is fine: the take runs first
+	// on the next cycle and reserves the freed coins before the ladder can.)
+	waitFor(t, "the outermost ask pulled", func() bool { _, ok := e.book.Get(outer); return !ok })
 }

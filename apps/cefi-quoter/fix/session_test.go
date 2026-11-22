@@ -100,7 +100,7 @@ func TestSessionLogonOrdersAndResend(t *testing.T) {
 		t.Fatalf("signed %q, want %q", signer.signed[0], want)
 	}
 
-	if err := s.NewOrder("cqabc", "BTC-USDC", "BUY", "100.5", "0.01", true); err != nil {
+	if err := s.NewOrder("cqabc", "BTC-USDC", "BUY", "100.5", "0.01", true, false); err != nil {
 		t.Fatal(err)
 	}
 	d := <-got

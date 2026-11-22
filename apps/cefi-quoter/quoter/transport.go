@@ -46,7 +46,8 @@ func (t *RESTTransport) Create(ctx context.Context, o *Order) (string, error) {
 		Side:         string(o.Side),
 		Price:        o.Price.String(),
 		Qty:          o.Qty.String(),
-		PostOnly:     true,
+		PostOnly:     !o.Take,
+		IOC:          o.Take,
 	})
 }
 
@@ -71,7 +72,7 @@ func (t *FIXTransport) Ready() bool  { return t.Session.LoggedOn() }
 
 func (t *FIXTransport) Create(_ context.Context, o *Order) (string, error) {
 	// The first ClOrdID is the external id, so the drop copy echoes it exactly as for REST.
-	return "", t.Session.NewOrder(o.ExternalID, t.Symbol, string(o.Side), o.Price.String(), o.Qty.String(), true)
+	return "", t.Session.NewOrder(o.ExternalID, t.Symbol, string(o.Side), o.Price.String(), o.Qty.String(), !o.Take, o.Take)
 }
 
 func (t *FIXTransport) Modify(_ context.Context, _, clOrdID, origClOrdID string, price, qty decimal.Decimal) error {
