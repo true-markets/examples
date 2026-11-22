@@ -184,3 +184,18 @@ func (p Params) Merge(patch []byte) (Params, error) {
 	}
 	return next, nil
 }
+
+// IsUSD reports a dollar stablecoin (USDC, USDT, PYUSD, USDG, USD1, ...): every book's quote
+// currency. Amounts in it are shown as USD, so nothing changes if the default stablecoin does.
+func IsUSD(symbol string) bool {
+	s := strings.ToUpper(symbol)
+	return strings.HasPrefix(s, "USD") || strings.HasSuffix(s, "USD") || s == "DAI"
+}
+
+// QuoteUnit is how an amount in symbol is labeled: USD for any dollar stablecoin, else the symbol.
+func QuoteUnit(symbol string) string {
+	if IsUSD(symbol) {
+		return "USD"
+	}
+	return symbol
+}

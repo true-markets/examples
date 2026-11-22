@@ -51,8 +51,8 @@ npm run dev
 
 A **Trading | Quoter** switch appears in the header. The Quoter screen has:
 
-- **Books**: every book, with its state, orders, position and PnL. Pick one from the list of books the exchange offers to add it, then set up its reference sources with a live preview (see [Reference prices](#reference-prices)). **Start all** and **Stop all** act on every book.
-- **Shared balances**: the ledger every book draws on: spendable, held by the books, held by orders the quoter didn't place, and free.
+- **Books**: every book, with its state, orders, position (in the asset and in USD) and PnL. Amounts in the quote currency are shown as USD, whichever dollar stablecoin it is. Pick one from the list of books the exchange offers to add it, then set up its reference sources with a live preview (see [Reference prices](#reference-prices)). **Start all** and **Stop all** act on every book.
+- **Shared balances**: the ledger every book draws on, in USD with quantities under them: **Balance** (your CeFi balance), **Trading** (held by the quoter's orders), **Unused** (what's left for new orders), and **Other orders** when orders the quoter didn't place hold funds. Sortable and filterable.
 - For the selected book: its state and the reason for it, the ladder (where each order rests next to where the strategy wants it), position and PnL, its budget, activity, an event feed, and a field for every parameter. Change one, press **Apply**, and the book uses it on its next cycle; it's saved to `books.json` too. **Start quoting** asks for confirmation on production. **Stop and pull quotes** cancels that book's orders. A stopped book with nothing resting can be removed.
 
 ### Going live

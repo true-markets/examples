@@ -27,7 +27,10 @@ import {
   useUpdateQuoterParams,
 } from "../api.ts";
 import { describeBlend, describeSource, ReferenceEditor } from "./ReferenceEditor.tsx";
-import { price as fmtPrice, qty as fmtQty, usd as fmtUsd } from "../format.ts";
+import { createColumnHelper, type ColumnDef, type ColumnFiltersState } from "@tanstack/react-table";
+import { DataTable, type ColMeta } from "../table/DataTable.tsx";
+import { Stack } from "./Balances.tsx";
+import { price as fmtPrice, qty as fmtQty, quoteUnit, usd as fmtUsd } from "../format.ts";
 import { Button, cx, Empty, inputClass, Modal, Panel, StatusBadge } from "./ui.tsx";
 
 // The management screen for a running cefi-quoter (apps/cefi-quoter). One quoter runs every book,
@@ -75,7 +78,7 @@ export function QuoterScreen() {
             <TradesView />
           ) : (
             <Split id="quoter" orientation="horizontal">
-              <Pane id="quoter-left" defaultSize="22" minSize={260}>
+              <Pane id="quoter-left" defaultSize="28" minSize={300}>
                 <Split id="quoter-left" orientation="vertical">
                   <Pane id="quoter-books" defaultSize="55" minSize={120}>
                     <div className={pane}>
@@ -91,7 +94,7 @@ export function QuoterScreen() {
                 </Split>
               </Pane>
               <Divider />
-              <Pane id="quoter-book" defaultSize="78" minSize="40">
+              <Pane id="quoter-book" defaultSize="72" minSize="40">
                 <div className={pane}>
                   {selected ? (
                     <BookView key={selected} symbol={selected} live={desk.environment === "production"} paper={desk.mode === "paper"} />
@@ -355,10 +358,11 @@ function BookRow({ b, active, onSelect }: { b: QuoterBookSummary; active: boolea
       </div>
       <div className="num mt-0.5 flex gap-2 text-[11px] text-muted">
         <span>{b.orders} orders</span>
-        <span>
+        <span title={b.reference ? `at the reference, ${fmtPrice(b.reference)}` : "no reference price yet"}>
           pos {signed(b.position, 6)} {b.market.baseSymbol}
+          {b.reference && Number(b.position) !== 0 && <span className="text-faint"> · {signedUsd(Number(b.position) * Number(b.reference))}</span>}
         </span>
-        <span className="ml-auto">PnL {signed(pnl)}</span>
+        <span className="ml-auto">PnL {signedUsd(pnl)}</span>
       </div>
       {b.reason && b.state === "waiting" && <div className="mt-0.5 truncate text-[11px] text-accent">{b.reason}</div>}
     </button>
@@ -420,76 +424,150 @@ function AddBook({ d, onAdded }: { d: QuoterDeskStatus; onAdded: (s: string) => 
   );
 }
 
+// One row of the shared ledger, with each amount's USD value worked out for sorting and filtering.
+interface LedgerRow {
+  assetId: string;
+  symbol: string;
+  price: number | null;
+  qty: Record<LedgerCol, number>;
+  usd: Record<LedgerCol, number | null>;
+}
+type LedgerCol = "balance" | "trading" | "other" | "unused";
+
+const ledgerCols: { id: LedgerCol; field: "spendable" | "ourHold" | "foreignHold" | "free"; label: string; title: string }[] = [
+  {
+    id: "balance",
+    field: "spendable",
+    label: "Balance",
+    title: "Your CeFi balance the quoter can use: less transfer holds and anything leaving at settlement, less fills since the last read",
+  },
+  { id: "trading", field: "ourHold", label: "Trading", title: "Held right now by the quoter's own orders, across every book" },
+  {
+    id: "other",
+    field: "foreignHold",
+    label: "Other orders",
+    title: "Held by orders the quoter didn't place: ones you placed in the console or the app, or another program on the same account",
+  },
+  { id: "unused", field: "free", label: "Unused", title: "Balance less everything held: what any book can still put into a new order" },
+];
+
+const ledgerHelper = createColumnHelper<LedgerRow>();
+
 function SharedBalancesPanel({ d }: { d: QuoterDeskStatus }) {
-  const th = "px-1.5 py-1.5 font-medium text-right";
-  const td = "px-1.5 py-1.5 text-right";
+  const [filters, setFilters] = useState<ColumnFiltersState>([]);
+  const rows = useMemo<LedgerRow[]>(
+    () =>
+      d.balances.map((a) => {
+        const price = a.price ? Number(a.price) : null;
+        const qty = {} as Record<LedgerCol, number>;
+        const usd = {} as Record<LedgerCol, number | null>;
+        for (const c of ledgerCols) {
+          qty[c.id] = Number(a[c.field]);
+          usd[c.id] = price === null ? null : qty[c.id] * price;
+        }
+        return { assetId: a.assetId, symbol: a.symbol || a.assetId, price, qty, usd };
+      }),
+    [d.balances],
+  );
+  // Other orders only shows when something else on the account is holding funds.
+  const showOther = rows.some((r) => r.qty.other !== 0);
+  const columns = useMemo(
+    () => [
+      ledgerHelper.accessor("symbol", {
+        id: "symbol",
+        header: "Asset",
+        size: 72,
+        meta: { label: "Asset", filter: { kind: "multi" } } satisfies ColMeta,
+        cell: (c) => (
+          <div className="leading-tight">
+            <div className="font-semibold text-ink">{c.getValue()}</div>
+            <div className="num text-[10px] text-faint">{c.row.original.price !== null ? `$${fmtPrice(c.row.original.price)}` : "no book prices it"}</div>
+          </div>
+        ),
+      }),
+      ...ledgerCols
+        .filter((col) => col.id !== "other" || showOther)
+        .map((col) =>
+          ledgerHelper.accessor((r) => r.usd[col.id], {
+            id: col.id,
+            header: col.label,
+            size: 104, // room for the sort arrow and filter button
+            sortingFn: (a, b) => (a.getValue<number | null>(col.id) ?? -Infinity) - (b.getValue<number | null>(col.id) ?? -Infinity),
+            meta: {
+              label: col.label,
+              align: "right",
+              title: `${col.title}. USD on top, quantity below`,
+              filter: { kind: "range", unit: "$" },
+            } satisfies ColMeta,
+            cell: (c) => {
+              const r = c.row.original;
+              const q = r.qty[col.id];
+              const v = c.getValue();
+              return (
+                <Stack
+                  top={v === null ? "—" : fmtUsd(v)}
+                  topClass={q === 0 ? "text-muted" : undefined}
+                  bottom={`${fmtQty(q)} ${r.symbol}`}
+                  strong={col.id === "unused"}
+                />
+              );
+            },
+          }),
+        ),
+    ],
+    [showOther],
+  );
+  const facets = useMemo(() => ({ symbol: rows.map((r) => ({ value: r.symbol, count: 1 })) }), [rows]);
+  const total = (k: LedgerCol) => rows.reduce((s, r) => s + (r.usd[k] ?? 0), 0);
   return (
-    <Panel title="Shared balances" className="h-full">
-      <div className="h-full overflow-y-auto">
-        <div className="overflow-x-auto">
-          <table className="num w-full text-xs">
-            <thead className="text-[11px] text-muted">
-              <tr className="border-b border-line">
-                <th className="px-1.5 py-1.5 text-left font-medium">Asset</th>
-                <th className={th} title="Balance less transfer holds and anything leaving at settlement, less fills since the last read">
-                  Spendable
-                </th>
-                <th className={th} title="What every book's orders hold now">
-                  Books
-                </th>
-                <th className={th} title="Held by orders this quoter didn't place (the console, another program)">
-                  Other
-                </th>
-                <th className={th}>Free</th>
-              </tr>
-            </thead>
-            <tbody>
-              {d.balances.map((a) => {
-                // Each amount with its value in the quote currency (USDC) under it, as in the ladder.
-                const cell = (v: string) => (
-                  <>
-                    {fmtQty(v)}
-                    {a.price && Number(a.price) !== 1 && <Dollars qty={v} price={a.price} />}
-                  </>
-                );
-                return (
-                  <tr key={a.assetId} className="border-b border-line/60 align-top">
-                    <td className="px-1.5 py-1.5" title={a.price ? `${fmtPrice(a.price)} each` : "no book prices it yet"}>
-                      {a.symbol || a.assetId}
-                    </td>
-                    <td className={td}>{cell(a.spendable)}</td>
-                    <td className={td}>{cell(a.ourHold)}</td>
-                    <td className={cx(td, "text-faint")}>{Number(a.foreignHold) ? cell(a.foreignHold) : "—"}</td>
-                    <td className={td}>{cell(a.free)}</td>
-                  </tr>
-                );
-              })}
-              {d.balances.some((a) => a.price) && (
-                <tr className="font-semibold">
-                  <td className="px-1.5 py-1.5" title="Everything priced, in the quote currency">
-                    Total $
-                  </td>
-                  {(["spendable", "ourHold", "foreignHold", "free"] as const).map((k) => (
-                    <td key={k} className={td}>
-                      {fmtUsd(d.balances.reduce((sum, a) => sum + (a.price ? Number(a[k]) * Number(a.price) : 0), 0))}
-                    </td>
-                  ))}
-                </tr>
-              )}
-              {d.balances.length === 0 && (
-                <tr>
-                  <td colSpan={5}>
-                    <Empty>Not read yet</Empty>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+    <Panel
+      title={
+        <span className="flex items-center gap-2">
+          Shared balances
+          {rows.some((r) => r.price !== null) && (
+            <span className="num rounded bg-raised px-1.5 py-0.5 text-[11px] font-medium tracking-normal text-ink normal-case" title="Balance, in USD">
+              {fmtUsd(total("balance"))}
+            </span>
+          )}
+        </span>
+      }
+      className="h-full"
+    >
+      <div className="flex h-full flex-col">
+        <div className="min-h-0 flex-1">
+          <DataTable<LedgerRow>
+            id="quoter-ledger"
+            data={rows}
+            columns={columns as ColumnDef<LedgerRow, unknown>[]}
+            getRowId={(r) => r.assetId}
+            defaultSorting={[{ id: "balance", desc: true }]}
+            filters={filters}
+            onFiltersChange={setFilters}
+            facets={facets}
+            toolbar={
+              <span className="num flex flex-wrap gap-x-3 text-[11px] text-muted">
+                <span>
+                  Trading <span className="text-ink">{fmtUsd(total("trading"))}</span>
+                </span>
+                {showOther && (
+                  <span>
+                    Other orders <span className="text-ink">{fmtUsd(total("other"))}</span>
+                  </span>
+                )}
+                <span>
+                  Unused <span className="text-ink">{fmtUsd(total("unused"))}</span>
+                </span>
+              </span>
+            }
+            empty="Balances not read yet."
+          />
         </div>
         <Help>
-          <p className="border-t border-line px-3 py-2 text-[11px] leading-relaxed text-faint">
-            One ledger for every book. A book takes funds from it before each new order or modify, so two books never spend the same balance. Read{" "}
-            {d.balancesReadAt ? new Date(d.balancesReadAt).toLocaleTimeString() : "not yet"}; between reads it follows the books' own orders and fills live.
+          <p className="shrink-0 border-t border-line px-3 py-2 text-[11px] leading-relaxed text-faint">
+            One ledger for every book. <b>Balance</b> is your CeFi balance; <b>Trading</b> is what the quoter's orders hold; <b>Unused</b> is what's left for
+            new orders{showOther ? "; Other orders is held by orders the quoter didn't place" : ""}. A book takes funds from it before each new order or modify,
+            so two books never spend the same balance. Read {d.balancesReadAt ? new Date(d.balancesReadAt).toLocaleTimeString() : "not yet"}; between reads it
+            follows the books' own orders and fills live.
           </p>
         </Help>
       </div>
@@ -588,7 +666,7 @@ function ControlBar({ s, live }: { s: QuoterStatus; live: boolean }) {
       {confirm && (
         <ConfirmStart
           title={`Start quoting ${symbol}?`}
-          body={`The quoter will place and keep moving real post-only orders on the production exchange, using up to ${fmtQty(s.balances.budgetQuote, 2)} ${s.market.quoteSymbol} and ${fmtQty(s.balances.budgetBase)} ${s.market.baseSymbol}. The ladder below shows what it will quote first. Stop pulls every order.`}
+          body={`The quoter will place and keep moving real post-only orders on the production exchange, using up to $${fmtQty(s.balances.budgetQuote, 2)} of ${s.market.quoteSymbol} and ${fmtQty(s.balances.budgetBase)} ${s.market.baseSymbol}. The ladder below shows what it will quote first. Stop pulls every order.`}
           onClose={() => setConfirm(false)}
           onConfirm={() => control.mutate({ action: "start", symbol })}
         />
@@ -622,6 +700,11 @@ function Row({ label, children, title }: { label: string; children: React.ReactN
   );
 }
 
+function signedUsd(v: number) {
+  if (Math.abs(v) < 0.005) v = 0; // no "−$0.00"
+  return <span className={v > 0 ? "text-buy" : v < 0 ? "text-sell" : ""}>{(v > 0 ? "+" : v < 0 ? "−" : "") + fmtUsd(Math.abs(v))}</span>;
+}
+
 function signed(v: string | number, decimals = 2) {
   const n = Number(v);
   return <span className={n > 0 ? "text-buy" : n < 0 ? "text-sell" : ""}>{(n > 0 ? "+" : "") + fmtQty(n, decimals)}</span>;
@@ -649,7 +732,7 @@ function PricesCard({ s, paper }: { s: QuoterStatus; paper: boolean }) {
 function PositionCard({ s }: { s: QuoterStatus }) {
   const p = s.position;
   const base = s.market.baseSymbol;
-  const quote = s.market.quoteSymbol;
+  const quote = quoteUnit(s.market.quoteSymbol);
   const max = Number(s.params.maxPosition ?? 0);
   const reset = useResetQuoterPosition();
   const [confirm, setConfirm] = useState(false);
@@ -722,7 +805,7 @@ function PositionCard({ s }: { s: QuoterStatus }) {
 function BalancesCard({ s }: { s: QuoterStatus }) {
   const b = s.balances;
   const base = s.market.baseSymbol;
-  const quote = s.market.quoteSymbol;
+  const quote = quoteUnit(s.market.quoteSymbol);
   return (
     <Card title="Budget">
       <Row
@@ -823,7 +906,7 @@ function LadderPanel({ s }: { s: QuoterStatus }) {
           <p className="border-t border-line px-3 py-2 text-[11px] leading-relaxed text-faint">
             Target is where the strategy wants each order this cycle; Bid and Ask are where the orders rest, with an arrow while a modify is in flight. An order
             only moves once its target is at least the modify threshold away ({s.params.modifyThresholdBps} bps). Size is what is still resting, in{" "}
-            {s.market.baseSymbol}, with its value in dollars ({s.market.quoteSymbol}) under it.
+            {s.market.baseSymbol}, with its value in USD under it.
           </p>
         </Help>
       </div>
@@ -896,7 +979,8 @@ function ParamsPanel({ symbol, s }: { symbol: string; s: QuoterStatus }) {
       </Panel>
     );
 
-  const { baseSymbol: base, quoteSymbol: quote } = s.market;
+  const base = s.market.baseSymbol;
+  const quote = quoteUnit(s.market.quoteSymbol);
   const unitSpec = data.schema.find((spec) => spec.key === "sizeUnit");
   const sizeUnit = draft.sizeUnit === "quote" ? "quote" : "base";
   const mid = Number(s.reference?.mid ?? 0);
@@ -1126,7 +1210,7 @@ function TotalsBar({ d }: { d: QuoterDeskStatus }) {
           <span key={x.quote} className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
             <span className={item} title="Realized plus unrealized, since each book's position started counting">
               <span className={label}>PnL</span>
-              {signed(pnl)} {x.quote}
+              {signed(pnl)} {quoteUnit(x.quote)}
               <span className="text-faint">
                 ({signed(x.realizedPnl)} realized · {signed(x.unrealizedPnl)} open)
               </span>

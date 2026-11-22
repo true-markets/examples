@@ -169,7 +169,7 @@ func (e *Engine) emptySideReasonLocked(side Side, mid decimal.Decimal) string {
 	// Sizes are quoted back in the unit the book is set to, so the numbers match the form.
 	unit, minText := base, minSize.String()+" "+base+", about $"+minUSD
 	if set.SizeUnit == SizeInQuote {
-		unit, minText = quote, "about "+minUSD+" "+quote
+		unit, minText = QuoteUnit(quote), "about $"+minUSD
 	}
 	least := minSize.String()
 	if set.SizeUnit == SizeInQuote {
@@ -191,7 +191,7 @@ func (e *Engine) emptySideReasonLocked(side Side, mid decimal.Decimal) string {
 		}
 	}
 	if side == Buy && e.budgetQuote.LessThan(minSize.Mul(mid)) {
-		return fmt.Sprintf("the bids may hold %s %s, under one minimum order (about $%s); add %s or raise maxQuoteAlloc", e.budgetQuote.StringFixed(2), quote, minUSD, quote)
+		return fmt.Sprintf("the bids may hold %s %s, under one minimum order (about $%s); add %s or raise maxQuoteAlloc", e.budgetQuote.StringFixed(2), QuoteUnit(quote), minUSD, quote)
 	}
 	if side == Sell && e.budgetBase.LessThan(minSize) {
 		return fmt.Sprintf("the asks may hold %s %s, under one minimum order (%s %s); add %s or raise the base allocation", e.budgetBase, base, minSize, base, base)

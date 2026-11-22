@@ -16,7 +16,7 @@ One quoter runs every book, all on one shared view of the account's balances. Th
 | --- | --- | --- |
 | **Quoter bar** | LIVE / UAT / PAPER, the number of books, and the health of order entry (REST or FIX), the drop copy, market data and the reference | Start all (production asks first), Stop all |
 | **Books** | Every book with its state, orders, position and PnL | Pick one to see it; add a book from those the exchange offers, then choose its reference sources in an editor that previews them live |
-| **Shared balances** | Per asset: spendable, held by the books, held by orders the quoter didn't place, free, each with its value in USDC under it, and a dollar total | |
+| **Shared balances** | Per asset, in USD with the quantity under it: **Balance** (your CeFi balance the quoter can use), **Trading** (held by the quoter's orders), **Unused** (left for new orders), and **Other orders** when orders the quoter didn't place hold some. Totals on top | Sort and filter by any column, as in the trading view's tables |
 | **Totals** | Across every book: PnL (realized and open), volume, books quoting, requests, fills, and edge at fill with its +30s and +300s mark-outs | |
 | **Trades** (the Books / Trades switch) | Every fill this run: side, maker level or which taker, price, notional, fair value at the time, edge at fill, the +30s and +300s mark-outs, and how much edge was kept. A summary per book and for all books above it | |
 | **Book bar** | Quoting, waiting (with the reason, e.g. "reference feed silent") or stopped, and the book's reference | Start quoting (production asks first), Stop and pull quotes, Remove a stopped book with nothing resting |

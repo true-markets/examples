@@ -92,7 +92,7 @@ function usdText(v: number | null): string {
 }
 
 // Two lines in one cell: the figure you sort by on top, the quantity it comes from underneath.
-function Stack({ top, bottom, topClass, strong }: { top: ReactNode; bottom: ReactNode; topClass?: string; strong?: boolean }) {
+export function Stack({ top, bottom, topClass, strong }: { top: ReactNode; bottom: ReactNode; topClass?: string; strong?: boolean }) {
   return (
     <div className="leading-tight">
       <div className={cx("num", strong && "font-medium", topClass ?? "text-ink")}>{top}</div>

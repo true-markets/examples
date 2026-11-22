@@ -111,7 +111,7 @@ func (e *Engine) restoreState(s BookState, savedAt time.Time) {
 	}
 	e.events = append(s.Events, e.events...)
 	e.eventLocked("info", fmt.Sprintf("restored from the state saved %s: position %s %s, realized PnL %s %s",
-		savedAt.Local().Format("Jan 2 15:04:05"), p.Qty, e.market.BaseSymbol, p.RealizedPnl.StringFixed(2), e.market.QuoteSymbol))
+		savedAt.Local().Format("Jan 2 15:04:05"), p.Qty, e.market.BaseSymbol, p.RealizedPnl.StringFixed(2), QuoteUnit(e.market.QuoteSymbol)))
 }
 
 // ResetPosition starts the book's position, PnL, volume and activity counts again from zero, as

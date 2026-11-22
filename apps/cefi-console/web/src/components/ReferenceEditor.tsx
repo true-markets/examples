@@ -2,7 +2,7 @@ import { CircleAlert, Plus, Trash2, Wand2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { QuoterBlend, QuoterReferencePreview, QuoterSource, QuoterSourceView } from "../../../shared/api.ts";
 import { useQuoterPreview, useQuoterSuggest } from "../api.ts";
-import { price as fmtPrice, usd as fmtUsd } from "../format.ts";
+import { price as fmtPrice, quoteUnit, usd as fmtUsd } from "../format.ts";
 import { Button, cx, inputClass, Modal, selectClass } from "./ui.tsx";
 
 // Setting up a book's reference price: which sources it blends, how much each counts, and the
@@ -200,7 +200,7 @@ export function ReferenceEditor({
         </label>
       </div>
 
-      <Result view={view} error={preview.error?.message} pending={!view && !!valid} quote={symbol.split("-")[1] ?? ""} onApplyToken={setTokenMult} />
+      <Result view={view} error={preview.error?.message} pending={!view && !!valid} quote={quoteUnit(symbol.split("-")[1] ?? "")} onApplyToken={setTokenMult} />
     </Modal>
   );
 }

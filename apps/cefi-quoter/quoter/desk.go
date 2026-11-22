@@ -125,7 +125,7 @@ func NewDesk(cfg DeskConfig) *Desk {
 		d.catalog[l.Symbol] = l
 		d.names[l.BaseAssetID] = l.BaseSymbol
 		d.names[l.QuoteAssetID] = l.QuoteSymbol
-		if l.QuoteSymbol == "USDC" {
+		if IsUSD(l.QuoteSymbol) {
 			d.ledger.SetFeeAsset(l.QuoteAssetID)
 		}
 	}
