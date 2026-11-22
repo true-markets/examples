@@ -174,17 +174,17 @@ Everything goes in `.env`; [.env.example](.env.example) lists all of it with com
 | `LEVELS` | 3 | Orders per side |
 | `LEVEL_SPREAD_MULT` | 1.5 | Each level out is this many times the previous spread |
 | `SIZE_UNIT` | quote | What the sizes below are in: `quote` (USDC, converted to the base asset at the reference price every cycle) or `base` (each book's base asset) |
-| `QUOTE_SIZE` | 5 | First level's size, in `SIZE_UNIT`. It must clear the exchange's $1 minimum |
+| `QUOTE_SIZE` | 10 | First level's size, in `SIZE_UNIT`. It has to cover at least one lot (the exchange's quantity step) and $1: on BTC near $60,000 one lot is 0.0001, about $6 |
 | `LEVEL_SIZE_MULT` | 1 | Each level out is this many times the previous size |
 | `MODIFY_THRESHOLD_BPS` | 2 | Leave an order alone until its target moves this far. Keep it under the spread |
-| `MAX_POSITION` | 50 | **Max position change**: how far a book may move your holdings from where they were when the quoter started (bought minus sold since then), long or short, in `SIZE_UNIT`. A side stops quoting at the limit. It starts from 0 on every restart. 0 turns the limit and skew off |
+| `MAX_POSITION` | 100 | **Max position change**: how far a book may move your holdings from where they were when the quoter started (bought minus sold since then), long or short, in `SIZE_UNIT`. A side stops quoting at the limit. It starts from 0 on every restart. 0 turns the limit and skew off |
 | `SKEW_BPS` | 5 | Mid shift back toward where you started, at the max position change |
 | `MAX_QUOTE_ALLOC` | 0 | Most quote this book's bids may hold (USDC, so already dollars); 0 means any free balance. Set one per book when books share a quote asset |
 | `MAX_BASE_ALLOC` | 0 | Most of the base asset this book's asks may hold, in `SIZE_UNIT`; 0 means any free balance |
 | `REF_STALE_MS` | 3000 | Pull quotes when the reference feed has been silent this long |
 | `MIN_REQUOTE_MS` | 100 | Smallest gap between rounds of order changes |
 
-Sizes in USDC are the easy default: one set of numbers works on any book, from BTC to a $270 tokenized stock, and a $5 level stays $5 as the price moves. The exchange still sizes orders in the base asset, so each level is rounded down to the book's lot: $2.18 of GOOGLC at $272 is 0.008, which the 0.001 lot leaves as 0.007 ($1.91). Each book has its own **Sizes in** switch at the top of its parameters on the Quoter screen; flipping it converts that book's sizes at the current reference price. Books saved before this setting existed keep their sizes in the base asset.
+Sizes in USDC are the easy default: one set of numbers works on any book, from BTC to a $270 tokenized stock, and a $10 level stays $10 as the price moves. The exchange still sizes orders in the base asset, so each level is rounded down to the book's lot: $2.18 of GOOGLC at $272 is 0.008, which the 0.001 lot leaves as 0.007 ($1.91). Each book has its own **Sizes in** switch at the top of its parameters on the Quoter screen; flipping it converts that book's sizes at the current reference price. Books saved before this setting existed keep their sizes in the base asset.
 
 Position and PnL count each book's fills since this run started, at average cost. They start at zero on every start: the position is the change in your holdings, not the holdings themselves, and the max position change bounds it on each side.
 
