@@ -326,8 +326,23 @@ function ConfirmStart({ title, body, onClose, onConfirm }: { title: string; body
 }
 
 function BooksPanel({ d, selected, onSelect }: { d: QuoterDeskStatus; selected?: string; onSelect: (s: string) => void }) {
+  const quoting = d.books.filter((b) => b.state === "quoting").length;
+  const orders = d.books.reduce((n, b) => n + b.orders, 0);
   return (
-    <Panel title="Books" className="h-full">
+    <Panel
+      title="Books"
+      className="h-full"
+      actions={
+        d.books.length > 0 && (
+          <span className="num text-[11px] text-muted" title="Books quoting now, and the orders they have resting">
+            <span className={quoting === d.books.length ? "text-ink" : "text-accent"}>
+              {quoting}/{d.books.length}
+            </span>{" "}
+            quoting · <span className="text-ink">{orders}</span> orders
+          </span>
+        )
+      }
+    >
       <div className="flex h-full flex-col">
         <div className="min-h-0 flex-1 divide-y divide-line/60 overflow-y-auto">
           {d.books.map((b) => (
@@ -1446,10 +1461,6 @@ function AllBooksBar({ d, open, onToggle }: { d: QuoterDeskStatus; open: boolean
             <span className={barItem}>
               <span className={barLabel}>Volume</span>
               {fmtUsd(Number(x.volumeQuote))}
-            </span>
-            <span className={barItem}>
-              <span className={barLabel}>Books</span>
-              {x.quoting}/{x.books} quoting · {x.orders} orders
             </span>
           </Fragment>
         );
