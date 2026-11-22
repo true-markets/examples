@@ -3,12 +3,27 @@ import { useEffect, useState } from "react";
 import type { DefiQuote } from "../../../shared/api.ts";
 import { isDefiDone } from "../../../shared/api.ts";
 import type { Side, TimeInForce } from "../../../shared/wire.ts";
-import { useDefiExecute, useDefiOrder, useDefiQuote, useInstruments, usePlaceOrder, useSession } from "../api.ts";
+import {
+  useDefiExecute,
+  useDefiOrder,
+  useDefiQuote,
+  useInstruments,
+  usePlaceOrder,
+  useSession,
+} from "../api.ts";
 import { price as fmtPrice, qty as fmtQty, usd } from "../format.ts";
 import { store, useMarket } from "../store.ts";
 import { sizeOrder, type SizeUnit } from "../order-size.ts";
 import { useUi } from "../ui-state.tsx";
-import { Button, Field, Modal, Panel, Segmented, cx, inputClass } from "./ui.tsx";
+import {
+  Button,
+  Field,
+  Modal,
+  Panel,
+  Segmented,
+  cx,
+  inputClass,
+} from "./ui.tsx";
 
 type Venue = "CEFI" | "DEFI";
 
@@ -35,11 +50,17 @@ export function Ticket() {
   const [quote, setQuote] = useState<DefiQuote>();
   const [lastDefi, setLastDefi] = useState<string>();
 
-  const defi = instruments?.find((i) => i.symbol === symbol)?.defi;
-  // Not every book has a DeFi listing; fall back to CeFi when it doesn't.
+  const inst = instruments?.find((i) => i.symbol === symbol);
+  const defi = inst?.defi;
+  // A halted CeFi book takes no orders; its DeFi listing still trades.
+  const status =
+    (symbol && store.instruments.get(symbol)?.status) || inst?.status;
+  const halted = !!status && /HALT/i.test(status);
+  // Not every book has a DeFi listing; fall back to CeFi when it doesn't, and to DeFi when CeFi is halted.
   useEffect(() => {
     if (venue === "DEFI" && instruments && !defi) setVenue("CEFI");
-  }, [venue, defi, instruments]);
+    if (venue === "CEFI" && halted && defi) setVenue("DEFI");
+  }, [venue, defi, instruments, halted]);
 
   // A click on the book fills in the price and the side that would rest there.
   useEffect(() => {
@@ -47,12 +68,15 @@ export function Ticket() {
     if (ticket.price) {
       setPrice(ticket.price);
       setType("LIMIT");
-      setVenue("CEFI");
+      if (!halted) setVenue("CEFI");
     }
     if (ticket.side) setSide(ticket.side);
   }, [ticket]);
 
-  useEffect(() => setArmed(false), [side, type, tif, qty, price, symbol, venue, unit]);
+  useEffect(
+    () => setArmed(false),
+    [side, type, tif, qty, price, symbol, venue, unit],
+  );
 
   const onDefi = venue === "DEFI";
   const ebbo = symbol ? store.ebbo.get(symbol) : undefined;
@@ -74,13 +98,18 @@ export function Ticket() {
     base: baseSymbol,
     defiDecimals: defi?.decimals,
   });
-  const valid = !!symbol && sized.ok;
+  const cefiHalted = !onDefi && halted;
+  const valid = !!symbol && sized.ok && !cefiHalted;
 
   const submit = () => {
     if (!symbol || !valid) return;
     if (onDefi) {
       // The quote dialog is the confirmation step for a DeFi order.
-      if (sized.ok) quoteDefi.mutate({ symbol, side, qty: sized.qty }, { onSuccess: setQuote });
+      if (sized.ok)
+        quoteDefi.mutate(
+          { symbol, side, qty: sized.qty },
+          { onSuccess: setQuote },
+        );
       return;
     }
     // In live mode the first click arms the button and the second sends.
@@ -120,13 +149,32 @@ export function Ticket() {
       className="h-full"
       title={symbol ? `Ticket · ${symbol}` : "Ticket"}
       actions={
-        <span title={defi ? `CeFi: the exchange's book. DeFi: a market swap of ${defi.symbol} on ${defi.chain ?? "chain"}.` : "This book has no DeFi listing"}>
+        <span
+          title={[
+            halted
+              ? `CeFi: ${symbol} is ${status?.toLowerCase()}, so the exchange takes no orders on it.`
+              : "CeFi: the exchange's book.",
+            defi
+              ? `DeFi: a market swap of ${defi.symbol} on ${defi.chain ?? "chain"}.`
+              : "This book has no DeFi listing.",
+          ].join(" ")}
+        >
           <Segmented<Venue>
             value={venue}
-            onChange={(v) => (v === "DEFI" && !defi ? undefined : setVenue(v))}
+            onChange={(v) =>
+              (v === "DEFI" && !defi) || (v === "CEFI" && halted)
+                ? undefined
+                : setVenue(v)
+            }
             options={[
-              { value: "CEFI", label: "CeFi" },
-              { value: "DEFI", label: <span className={cx(!defi && "opacity-40")}>DeFi</span> },
+              {
+                value: "CEFI",
+                label: <span className={cx(halted && "opacity-40")}>CeFi</span>,
+              },
+              {
+                value: "DEFI",
+                label: <span className={cx(!defi && "opacity-40")}>DeFi</span>,
+              },
             ]}
           />
         </span>
@@ -142,7 +190,11 @@ export function Ticket() {
               onClick={() => setSide(s)}
               className={cx(
                 "h-7 rounded-[3px] text-xs font-semibold",
-                side === s ? (s === "BUY" ? "bg-buy text-white" : "bg-sell text-white") : "text-muted hover:text-ink",
+                side === s
+                  ? s === "BUY"
+                    ? "bg-buy text-white"
+                    : "bg-sell text-white"
+                  : "text-muted hover:text-ink",
               )}
             >
               {s === "BUY" ? "Buy" : "Sell"}
@@ -153,19 +205,49 @@ export function Ticket() {
         {onDefi ? (
           <>
             <p className="text-[11px] leading-relaxed text-muted">
-              Market swap on <span className="text-ink">{defi?.chain ?? "chain"}</span>. DeFi takes market orders only.
+              Market swap on{" "}
+              <span className="text-ink">{defi?.chain ?? "chain"}</span>. DeFi
+              takes market orders only.
             </p>
-            <AmountField unit={unit} setUnit={setUnit} base={baseSymbol} value={qty} onChange={setQty} />
+            <AmountField
+              unit={unit}
+              setUnit={setUnit}
+              base={baseSymbol}
+              value={qty}
+              onChange={setQty}
+            />
           </>
         ) : (
           <>
             <div className="flex items-center gap-2">
-              <Segmented value={type} onChange={setType} options={[{ value: "LIMIT", label: "Limit" }, { value: "MARKET", label: "Market" }]} />
-              {type === "LIMIT" && <Segmented value={tif} onChange={setTif} options={[{ value: "GTC", label: "GTC" }, { value: "IOC", label: "IOC" }]} />}
+              <Segmented
+                value={type}
+                onChange={setType}
+                options={[
+                  { value: "LIMIT", label: "Limit" },
+                  { value: "MARKET", label: "Market" },
+                ]}
+              />
+              {type === "LIMIT" && (
+                <Segmented
+                  value={tif}
+                  onChange={setTif}
+                  options={[
+                    { value: "GTC", label: "GTC" },
+                    { value: "IOC", label: "IOC" },
+                  ]}
+                />
+              )}
             </div>
             {/* Bottom-aligned, so the two inputs line up under labels of different heights. */}
             <div className="grid grid-cols-2 items-end gap-2">
-              <AmountField unit={unit} setUnit={setUnit} base={baseSymbol} value={qty} onChange={setQty} />
+              <AmountField
+                unit={unit}
+                setUnit={setUnit}
+                base={baseSymbol}
+                value={qty}
+                onChange={setQty}
+              />
               <Field label="Limit price">
                 <input
                   className={inputClass}
@@ -181,20 +263,60 @@ export function Ticket() {
         )}
 
         {!onDefi && (
-          <label className={cx("flex items-center gap-1.5 text-[11px] text-muted", type !== "LIMIT" && "opacity-40")}>
-            <input type="checkbox" checked={postOnly} disabled={type !== "LIMIT"} onChange={(e) => setPostOnly(e.target.checked)} />
+          <label
+            className={cx(
+              "flex items-center gap-1.5 text-[11px] text-muted",
+              type !== "LIMIT" && "opacity-40",
+            )}
+          >
+            <input
+              type="checkbox"
+              checked={postOnly}
+              disabled={type !== "LIMIT"}
+              onChange={(e) => setPostOnly(e.target.checked)}
+            />
             Post only (ALO)
           </label>
         )}
+        {cefiHalted && (
+          <p className="text-[11px] leading-snug text-accent">
+            {symbol} is {status?.toLowerCase()} on the exchange, so it takes no
+            CeFi orders{defi ? "; switch to DeFi to trade it" : ""}.
+          </p>
+        )}
         {/* Exactly what will be sent, after any USD ↔ quantity conversion. */}
-        {sized.describe && <p className={cx("text-[11px] leading-snug", sized.ok ? "text-muted" : "text-accent")}>{sized.describe}</p>}
-        <Button tone={armed ? "danger" : side === "BUY" ? "buy" : "sell"} size="md" className="w-full" disabled={!valid || busy} onClick={submit}>
+        {sized.describe && (
+          <p
+            className={cx(
+              "text-[11px] leading-snug",
+              sized.ok ? "text-muted" : "text-accent",
+            )}
+          >
+            {sized.describe}
+          </p>
+        )}
+        <Button
+          tone={armed ? "danger" : side === "BUY" ? "buy" : "sell"}
+          size="md"
+          className="w-full"
+          disabled={!valid || busy}
+          onClick={submit}
+        >
           {label}
         </Button>
         {live && (
-          <p className="text-center text-[10px] text-faint">{onDefi ? "Live: you confirm the quote before anything trades." : "Live: orders are real. Click twice to send."}</p>
+          <p className="text-center text-[10px] text-faint">
+            {onDefi
+              ? "Live: you confirm the quote before anything trades."
+              : "Live: orders are real. Click twice to send."}
+          </p>
         )}
-        {lastDefi && <DefiStatus orderId={lastDefi} onClear={() => setLastDefi(undefined)} />}
+        {lastDefi && (
+          <DefiStatus
+            orderId={lastDefi}
+            onClear={() => setLastDefi(undefined)}
+          />
+        )}
       </div>
 
       {quote && (
@@ -213,11 +335,25 @@ export function Ticket() {
 }
 
 // The amount input with its unit: USD by default, or a quantity of the asset.
-function AmountField({ unit, setUnit, base, value, onChange }: { unit: SizeUnit; setUnit: (u: SizeUnit) => void; base: string; value: string; onChange: (v: string) => void }) {
+function AmountField({
+  unit,
+  setUnit,
+  base,
+  value,
+  onChange,
+}: {
+  unit: SizeUnit;
+  setUnit: (u: SizeUnit) => void;
+  base: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
   return (
     <div>
       <div className="mb-1 flex items-center">
-        <span className="text-[11px] font-medium text-muted">{unit === "USD" ? "Amount (USD)" : `Quantity (${base})`}</span>
+        <span className="text-[11px] font-medium text-muted">
+          {unit === "USD" ? "Amount (USD)" : `Quantity (${base})`}
+        </span>
         <span className="ml-auto">
           <Segmented<SizeUnit>
             value={unit}
@@ -229,14 +365,31 @@ function AmountField({ unit, setUnit, base, value, onChange }: { unit: SizeUnit;
           />
         </span>
       </div>
-      <input className={inputClass} value={value} onChange={(e) => onChange(e.target.value)} placeholder={unit === "USD" ? "$0.00" : "0.00"} inputMode="decimal" aria-label={unit === "USD" ? "Amount in USD" : `Quantity of ${base}`} />
+      <input
+        className={inputClass}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={unit === "USD" ? "$0.00" : "0.00"}
+        inputMode="decimal"
+        aria-label={unit === "USD" ? "Amount in USD" : `Quantity of ${base}`}
+      />
     </div>
   );
 }
 
 // The confirmation step for a DeFi order: what goes in, what is expected out, and the fee, with the
 // gateway's warnings. Execute signs the payloads on the server and sends them.
-function DefiConfirm({ quote, live, onClose, onExecuted }: { quote: DefiQuote; live: boolean; onClose: () => void; onExecuted: (orderId: string) => void }) {
+function DefiConfirm({
+  quote,
+  live,
+  onClose,
+  onExecuted,
+}: {
+  quote: DefiQuote;
+  live: boolean;
+  onClose: () => void;
+  onExecuted: (orderId: string) => void;
+}) {
   const execute = useDefiExecute();
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -248,7 +401,14 @@ function DefiConfirm({ quote, live, onClose, onExecuted }: { quote: DefiQuote; l
   const inQty = Number(quote.qtyIn);
   const outQty = Number(quote.qtyOut);
   // USDC per unit of the asset, whichever way the swap goes.
-  const px = quote.side === "BUY" ? (outQty > 0 ? inQty / outQty : 0) : inQty > 0 ? outQty / inQty : 0;
+  const px =
+    quote.side === "BUY"
+      ? outQty > 0
+        ? inQty / outQty
+        : 0
+      : inQty > 0
+        ? outQty / inQty
+        : 0;
 
   return (
     <Modal
@@ -260,9 +420,17 @@ function DefiConfirm({ quote, live, onClose, onExecuted }: { quote: DefiQuote; l
           <Button
             tone={quote.side === "BUY" ? "buy" : "sell"}
             disabled={!quote.executable || expired || execute.isPending}
-            onClick={() => execute.mutate(quote.orderId, { onSuccess: () => onExecuted(quote.orderId) })}
+            onClick={() =>
+              execute.mutate(quote.orderId, {
+                onSuccess: () => onExecuted(quote.orderId),
+              })
+            }
           >
-            {execute.isPending ? "Sending…" : expired ? "Quote expired" : `${live ? "Execute LIVE swap" : "Execute swap"} (${left}s)`}
+            {execute.isPending
+              ? "Sending…"
+              : expired
+                ? "Quote expired"
+                : `${live ? "Execute LIVE swap" : "Execute swap"} (${left}s)`}
           </Button>
         </>
       }
@@ -281,7 +449,9 @@ function DefiConfirm({ quote, live, onClose, onExecuted }: { quote: DefiQuote; l
           {fmtQty(quote.fee, 6)} {quote.feeAsset}
         </dd>
         <dt className="text-muted">Price</dt>
-        <dd className="num text-right text-muted">{px > 0 ? `${fmtPrice(px, 4)} USDC` : "—"}</dd>
+        <dd className="num text-right text-muted">
+          {px > 0 ? `${fmtPrice(px, 4)} USDC` : "—"}
+        </dd>
       </dl>
       {quote.issues.length > 0 && (
         <div className="space-y-1 rounded border border-accent/40 bg-accent-soft px-3 py-2 text-[11px] text-accent">
@@ -292,45 +462,79 @@ function DefiConfirm({ quote, live, onClose, onExecuted }: { quote: DefiQuote; l
           ))}
         </div>
       )}
-      {!quote.executable && <p className="text-[11px] text-sell">This quote can't be executed.</p>}
+      {!quote.executable && (
+        <p className="text-[11px] text-sell">This quote can't be executed.</p>
+      )}
       <p className="text-[11px] leading-relaxed text-faint">
-        The amount received depends on the chain at execution and can differ from the quote. Getting this quote may have freed funds you had allocated to
-        CeFi, to pay for the swap; funds held by open CeFi orders are never used.
+        The amount received depends on the chain at execution and can differ
+        from the quote. Getting this quote may have freed funds you had
+        allocated to CeFi, to pay for the swap; funds held by open CeFi orders
+        are never used.
       </p>
     </Modal>
   );
 }
 
 // The most recent DeFi order from this ticket, followed until it completes or fails.
-function DefiStatus({ orderId, onClear }: { orderId: string; onClear: () => void }) {
+function DefiStatus({
+  orderId,
+  onClear,
+}: {
+  orderId: string;
+  onClear: () => void;
+}) {
   const { data, error } = useDefiOrder(orderId);
   const done = data && isDefiDone(data.status);
-  const tone = data?.status === "complete" ? "text-buy" : data?.status === "failed" || data?.status === "canceled" ? "text-sell" : "text-accent";
+  const tone =
+    data?.status === "complete"
+      ? "text-buy"
+      : data?.status === "failed" || data?.status === "canceled"
+        ? "text-sell"
+        : "text-accent";
   return (
     <div className="rounded border border-line bg-raised px-2.5 py-2 text-[11px]">
       <div className="flex items-center gap-1.5">
         <span className="text-muted">Last DeFi order</span>
-        <span className={cx("flex items-center gap-1 font-semibold uppercase", tone)}>
+        <span
+          className={cx(
+            "flex items-center gap-1 font-semibold uppercase",
+            tone,
+          )}
+        >
           {!done && <LoaderCircle size={11} className="animate-spin" />}
           {data?.status ?? "sent"}
         </span>
         {done && (
-          <button type="button" className="ml-auto text-faint hover:text-ink" onClick={onClear}>
+          <button
+            type="button"
+            className="ml-auto text-faint hover:text-ink"
+            onClick={onClear}
+          >
             Dismiss
           </button>
         )}
       </div>
       {data?.executedQty && Number(data.executedQty) > 0 && (
         <div className="num mt-1 text-ink">
-          {data.side === "SELL" ? "Sold" : "Bought"} {fmtQty(data.executedQty, 6)}
+          {data.side === "SELL" ? "Sold" : "Bought"}{" "}
+          {fmtQty(data.executedQty, 6)}
           {data.executedVwap ? ` @ ${fmtPrice(data.executedVwap, 4)}` : ""}
-          {data.fee ? <span className="text-muted"> · fee {fmtQty(data.fee, 6)}</span> : null}
+          {data.fee ? (
+            <span className="text-muted"> · fee {fmtQty(data.fee, 6)}</span>
+          ) : null}
         </div>
       )}
-      {data?.failureReason && <div className="mt-1 text-sell">{data.failureReason}</div>}
+      {data?.failureReason && (
+        <div className="mt-1 text-sell">{data.failureReason}</div>
+      )}
       {error && <div className="mt-1 text-sell">{error.message}</div>}
       {data?.explorerUrl ? (
-        <a className="mt-1 inline-flex items-center gap-1 text-info hover:underline" href={data.explorerUrl} target="_blank" rel="noreferrer">
+        <a
+          className="mt-1 inline-flex items-center gap-1 text-info hover:underline"
+          href={data.explorerUrl}
+          target="_blank"
+          rel="noreferrer"
+        >
           View transaction <ExternalLink size={11} />
         </a>
       ) : data?.txHash ? (
