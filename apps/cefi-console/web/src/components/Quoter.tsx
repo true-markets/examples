@@ -1363,15 +1363,17 @@ function TotalsBar({ d, bulk, onBulk }: { d: QuoterDeskStatus; bulk: boolean; on
   const t = d.trades;
   const item = "flex items-baseline gap-1.5";
   const label = "text-[10px] font-semibold uppercase tracking-wider text-muted";
+  const row = "flex min-w-0 flex-wrap items-baseline gap-x-6 gap-y-1";
+  // Two rows: results on top (PnL, volume, books, edge), activity underneath (requests, fills, maker
+  // share). The row names share a column so the figures line up.
   return (
-    <section className="num flex items-center gap-3 rounded-md border border-line bg-panel px-3 py-1.5 text-xs">
-      {/* The figures share a baseline; the button sits centred beside them without making the bar taller. */}
-      <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-6 gap-y-1">
-        <span className={label}>All books</span>
+    <section className="num grid grid-cols-[auto_minmax(0,1fr)_auto] items-baseline gap-x-4 gap-y-1 rounded-md border border-line bg-panel px-3 py-1.5 text-xs">
+      <span className={label}>All books</span>
+      <div className={row}>
         {d.totals.map((x) => {
           const pnl = Number(x.realizedPnl) + Number(x.unrealizedPnl);
           return (
-            <span key={x.quote} className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
+            <Fragment key={x.quote}>
               <span className={item} title="Realized plus unrealized, since each book's position started counting">
                 <span className={label}>PnL</span>
                 {signed(pnl)} {quoteUnit(x.quote)}
@@ -1387,17 +1389,7 @@ function TotalsBar({ d, bulk, onBulk }: { d: QuoterDeskStatus; bulk: boolean; on
                 <span className={label}>Books</span>
                 {x.quoting}/{x.books} quoting · {x.orders} orders
               </span>
-              <span className={item} title="New, modify and cancel requests sent">
-                <span className={label}>Requests</span>
-                {x.stats.creates} new · <span className="text-info">{x.stats.modifies} modify</span> · {x.stats.cancels} cancel
-              </span>
-              <span className={item}>
-                <span className={label}>Fills</span>
-                <span className="text-buy">{x.stats.fills}</span>
-                <span className="text-faint">· {x.stats.takeFills} from takes</span>
-                {x.stats.rejects > 0 && <span className="text-sell">· {x.stats.rejects} rejects</span>}
-              </span>
-            </span>
+            </Fragment>
           );
         })}
         {t.trades > 0 && (
@@ -1416,13 +1408,48 @@ function TotalsBar({ d, bulk, onBulk }: { d: QuoterDeskStatus; bulk: boolean; on
       <Button
         size="xs"
         tone="ghost"
-        className="-my-1 shrink-0"
+        className="-my-1 self-center"
         aria-expanded={bulk}
         onClick={() => onBulk(!bulk)}
         title={bulk ? "Close the all-books parameter editor" : "Edit parameters across every book"}
       >
         <SlidersHorizontal size={12} /> Parameters {bulk ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
       </Button>
+
+      <span className={label}>Activity</span>
+      <div className={cx(row, "col-span-2")}>
+        {d.totals.map((x) => {
+          const st = x.stats;
+          const maker = st.fills - st.takeFills;
+          return (
+            <Fragment key={x.quote}>
+              <span className={item} title="New, modify and cancel requests sent">
+                <span className={label}>Requests</span>
+                {st.creates} new · <span className="text-info">{st.modifies} modify</span> · {st.cancels} cancel
+              </span>
+              <span className={item}>
+                <span className={label}>Fills</span>
+                <span className="text-buy">{st.fills}</span>
+                <span className="text-faint">· {st.takeFills} from takes</span>
+                {st.rejects > 0 && <span className="text-sell">· {st.rejects} rejects</span>}
+              </span>
+              <span className={item} title="Of the fills, how many were the ladders' resting orders being hit, rather than takes crossing the spread">
+                <span className={label}>Maker</span>
+                {st.fills ? (
+                  <>
+                    {Math.round((100 * maker) / st.fills)}%
+                    <span className="text-faint">
+                      · {maker} of {st.fills} fills
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-faint">—</span>
+                )}
+              </span>
+            </Fragment>
+          );
+        })}
+      </div>
     </section>
   );
 }
