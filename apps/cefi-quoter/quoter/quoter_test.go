@@ -174,6 +174,11 @@ func TestBookLifecycle(t *testing.T) {
 		t.Fatal("NEW should settle the create")
 	}
 
+	// A modify to the same price and quantity is never sent: the exchange would reject it.
+	if _, _, ok := b.BeginModify(o.ExternalID, d("100"), d("2")); ok {
+		t.Fatal("a modify that changes nothing must be refused")
+	}
+
 	// Modify, then a fill lands while it's in flight, then the modify is confirmed.
 	if _, _, ok := b.BeginModify(o.ExternalID, d("101"), d("2")); !ok {
 		t.Fatal("modify refused")

@@ -286,6 +286,12 @@ func (b *Book) BeginModify(externalID string, price, qty decimal.Decimal) (newCl
 	if o == nil || o.InFlight != None {
 		return "", "", false
 	}
+	// The exchange rejects a modify that changes nothing ("Modification does not modify order").
+	// That happens when the plan asks for a bigger order at the same price and the free balance
+	// sizes it back down to what already rests, so it's never sent.
+	if price.Equal(o.Price) && qty.Equal(o.Qty) {
+		return "", "", false
+	}
 	o.PendingPrice, o.PendingQty = &price, &qty
 	o.InFlight, o.SentAt = Modify, time.Now()
 	newClOrdID = b.newIDLocked()
