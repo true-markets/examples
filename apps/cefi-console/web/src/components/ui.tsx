@@ -10,12 +10,26 @@ export function cx(...parts: (string | false | null | undefined)[]): string {
 // (the Columns button) rather than spending a row on them.
 export const PanelHeaderSlot = createContext<HTMLElement | null>(null);
 
-export function Panel({ title, actions, children, className }: { title: ReactNode; actions?: ReactNode; children: ReactNode; className?: string }) {
+// center sits in the middle of the header, between the title and the actions.
+export function Panel({
+  title,
+  actions,
+  center,
+  children,
+  className,
+}: {
+  title: ReactNode;
+  actions?: ReactNode;
+  center?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
   const [slot, setSlot] = useState<HTMLElement | null>(null);
   return (
     <section className={cx("flex min-h-0 flex-col rounded-md border border-line bg-panel", className)}>
-      <header className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
+      <header className="relative flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
         <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted">{title}</h2>
+        {center && <div className="absolute left-1/2 -translate-x-1/2 whitespace-nowrap">{center}</div>}
         <div className="ml-auto flex items-center gap-1.5">
           {actions}
           <span ref={setSlot} className="flex items-center empty:hidden" />

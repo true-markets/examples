@@ -966,7 +966,7 @@ function LadderPanel({ s }: { s: QuoterStatus }) {
   }));
   const th = "px-2 py-1.5 font-medium";
   return (
-    <Panel className="h-full" title={s.enabled ? "Ladder" : "Ladder (preview: what it would quote)"}>
+    <Panel className="h-full" title={s.enabled ? "Ladder" : "Ladder (preview: what it would quote)"} center={<LadderSpread s={s} />}>
       <div className="h-full overflow-auto">
         <div className="overflow-x-auto">
           <table className="num w-full text-xs">
@@ -1016,6 +1016,32 @@ function LadderPanel({ s }: { s: QuoterStatus }) {
         </Help>
       </div>
     </Panel>
+  );
+}
+
+// The spread between the ladder's own best bid and best ask: what's resting, or what it would quote
+// when nothing rests yet (a stopped book's preview).
+function LadderSpread({ s }: { s: QuoterStatus }) {
+  const resting = s.orders.filter((o) => !o.take && o.level >= 0);
+  const bids = resting.filter((o) => o.side === "BUY").map((o) => Number(o.price));
+  const asks = resting.filter((o) => o.side === "SELL").map((o) => Number(o.price));
+  const fromTargets = bids.length === 0 && asks.length === 0;
+  if (fromTargets) {
+    for (const t of s.targets) (t.side === "BUY" ? bids : asks).push(Number(t.price));
+  }
+  if (bids.length === 0 || asks.length === 0) return null;
+  const bid = Math.max(...bids);
+  const ask = Math.min(...asks);
+  const spread = ask - bid;
+  const bps = (spread / ((ask + bid) / 2)) * 10_000;
+  return (
+    <span
+      className="num text-[11px] text-muted"
+      title={`${fromTargets ? "What the ladder would quote" : "The ladder's resting best bid and ask"}: ${fmtPrice(bid)} / ${fmtPrice(ask)}`}
+    >
+      Spread <span className="text-ink">{bps.toFixed(1)} bps</span> · <span className="text-ink">{fmtUsd(spread)}</span>
+      {fromTargets && <span className="text-faint"> (target)</span>}
+    </span>
   );
 }
 

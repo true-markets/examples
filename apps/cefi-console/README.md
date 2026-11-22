@@ -27,7 +27,7 @@ One quoter runs every book, all on one shared view of the account's balances. Th
 | **Taking** | Each side: the price a take would cross to and its size, the edge on offer against the edge needed (as a bar), and what's in the way: off, no edge (and how many bps away), below cost, too small, no funds, cool-down | |
 | **Budget** | What this book's bids and asks hold, out of what they may hold, with the share in use: green, yellow from 75%, red above 90% (the next order on that side may not fit), and the shared free balance | |
 | **Activity** | Creates, modifies and cancels sent, fills, rejects, takes (IOCs crossing the spread) sent and filled, and how many order changes were modifies | |
-| **Ladder** | Each level's target next to the order resting there, with an arrow while a modify is in flight. Before you start, it previews what would be quoted | |
+| **Ladder** | Each level's target next to the order resting there, with an arrow while a modify is in flight, and in the header the spread between the ladder's own best bid and ask, in bps and dollars. Before you start, it previews what would be quoted | |
 | **Parameters** | Every strategy setting for this book, with its unit and what it does, including the profit taker and takeout switches under Taking | Edit any of them and press Apply; the book uses them on its next cycle, and the quoter saves them |
 | **Events** | Fills, rejects, parameter changes and connection changes as they happen | |
 
