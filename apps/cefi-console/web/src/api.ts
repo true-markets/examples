@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type {
   Balances,
@@ -269,6 +269,52 @@ export const useUpdateQuoterParams = () =>
     success: (_r, { symbol, patch }) => `${symbol}: set ${Object.keys(patch).join(", ")}`,
     invalidate: ["quoter-params", "quoter-book", "quoter-status"],
   });
+
+// Every book's parameters at once, for the all-books editor. Shares the cache with each book's own
+// Parameters panel.
+export const useAllQuoterParams = (symbols: string[], enabled: boolean) =>
+  useQueries({
+    queries: symbols.map((symbol) => ({
+      queryKey: ["quoter-params", symbol],
+      queryFn: () => call<QuoterParamsResponse>("GET", `${bookPath(symbol)}/params`),
+      enabled,
+      retry: false,
+    })),
+  });
+
+// Patches several books, one after another. Each book takes its own patch or rejects it; one
+// rejection doesn't stop the rest. Resolves with what happened to each.
+export interface BulkParamsResult {
+  symbol: string;
+  error?: string;
+}
+export function useBulkUpdateQuoterParams() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (patches: { symbol: string; patch: QuoterParams }[]) => {
+      const out: BulkParamsResult[] = [];
+      for (const { symbol, patch } of patches) {
+        try {
+          await call("PATCH", `${bookPath(symbol)}/params`, patch);
+          out.push({ symbol });
+        } catch (err) {
+          out.push({ symbol, error: (err as Error).message });
+        }
+      }
+      return out;
+    },
+    onSettled: () => {
+      for (const key of ["quoter-params", "quoter-book", "quoter-status"]) void qc.invalidateQueries({ queryKey: [key] });
+    },
+    onSuccess: (out) => {
+      const ok = out.filter((r) => !r.error).length;
+      const failed = out.filter((r) => r.error);
+      if (ok) toast.ok(`Parameters set on ${ok} book${ok === 1 ? "" : "s"}`);
+      for (const f of failed) toast.error(`${f.symbol}: ${f.error}`);
+    },
+    onError: (err) => toast.error(err.message),
+  });
+}
 
 // Start or stop one book, or every book when symbol is left out.
 export const useQuoterControl = () =>

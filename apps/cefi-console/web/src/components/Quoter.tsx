@@ -1,4 +1,4 @@
-import { CircleAlert, CircleHelp, Play, Plus, RotateCcw, Square, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, CircleAlert, CircleHelp, Play, Plus, RotateCcw, SlidersHorizontal, Square, Trash2 } from "lucide-react";
 import { createContext, Fragment, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Panel as Pane } from "react-resizable-panels";
 import { Divider, pane, Split } from "./Layout.tsx";
@@ -31,6 +31,7 @@ import { describeBlend, describeSource, ReferenceEditor } from "./ReferenceEdito
 import { createColumnHelper, type ColumnDef, type ColumnFiltersState } from "@tanstack/react-table";
 import { DataTable, type ColMeta } from "../table/DataTable.tsx";
 import { useUi } from "../ui-state.tsx";
+import { BulkParams } from "./BulkParams.tsx";
 import { Stack } from "./Balances.tsx";
 import { price as fmtPrice, qty as fmtQty, quoteUnit, usd as fmtUsd } from "../format.ts";
 import { Button, cx, Empty, inputClass, Modal, Panel, StatusBadge } from "./ui.tsx";
@@ -51,6 +52,7 @@ export function QuoterScreen() {
   const [picked, setPicked] = useState<string>();
   const [help, setHelp] = useHelpSetting();
   const [tab, setTab] = useStoredChoice<"books" | "trades">("cefi-console:quoter-tab", "books", ["books", "trades"]);
+  const [bulk, setBulk] = useStoredChoice<"open" | "closed">("cefi-console:quoter-bulk", "closed", ["open", "closed"]);
   const books = desk?.books ?? [];
   const has = (s: string | undefined) => !!s && books.some((b) => b.market.symbol === s);
   // The shared instrument if it's a book; else the last book picked here, or the first one.
@@ -86,7 +88,8 @@ export function QuoterScreen() {
     <ShowHelp.Provider value={help}>
       <div className="flex h-full min-h-0 flex-col gap-2">
         <DeskBar d={desk} stale={!!status.error} help={help} onHelp={setHelp} tab={tab} onTab={setTab} />
-        <TotalsBar d={desk} />
+        <TotalsBar d={desk} bulk={bulk === "open"} onBulk={(open) => setBulk(open ? "open" : "closed")} />
+        {bulk === "open" && desk.books.length > 0 && <BulkParams d={desk} />}
         <Warnings list={desk.warnings} />
         <div className="min-h-0 flex-1">
           {tab === "trades" ? (
@@ -1355,7 +1358,7 @@ function pct(v: number | null | undefined) {
   return <span className={v >= 0.5 ? "text-buy" : v < 0 ? "text-sell" : "text-accent"}>{Math.round(v * 100)}%</span>;
 }
 
-function TotalsBar({ d }: { d: QuoterDeskStatus }) {
+function TotalsBar({ d, bulk, onBulk }: { d: QuoterDeskStatus; bulk: boolean; onBulk: (open: boolean) => void }) {
   if (!d.books.length) return null;
   const t = d.trades;
   const item = "flex items-baseline gap-1.5";
@@ -1407,6 +1410,16 @@ function TotalsBar({ d }: { d: QuoterDeskStatus }) {
           <span className="text-faint">bps</span>
         </span>
       )}
+      <Button
+        size="xs"
+        tone="ghost"
+        className="ml-auto self-center"
+        aria-expanded={bulk}
+        onClick={() => onBulk(!bulk)}
+        title={bulk ? "Close the all-books parameter editor" : "Edit parameters across every book"}
+      >
+        <SlidersHorizontal size={12} /> Parameters {bulk ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+      </Button>
     </section>
   );
 }
