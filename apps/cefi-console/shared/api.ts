@@ -14,6 +14,8 @@ export interface Session {
   accountLabel: string | null;
   // Why something is missing, in plain words, so the UI can say it instead of failing quietly.
   warnings: string[];
+  // Set when QUOTER_URL points at a cefi-quoter; the header then shows the Quoter screen.
+  quoter?: { url: string } | null;
 }
 
 export interface Instrument {
@@ -216,4 +218,144 @@ export function isCustodySettled(move: CustodyMove): boolean {
 export interface ApiError {
   error: string;
   status?: number;
+}
+
+// ---------- cefi-quoter management API (apps/cefi-quoter), passed through by this server ----------
+// Decimals are strings, as everywhere else; plain numbers are numbers.
+
+export interface QuoterParamSpec {
+  key: string;
+  label: string;
+  type: "number" | "integer" | "decimal" | "choice";
+  // A fixed unit (bps, ms, x), "quote" for the quote currency, or "size" for a size in whichever
+  // unit sizeUnit chooses (the base asset or the quote currency).
+  unit?: string;
+  help: string;
+  min?: number;
+  max?: number;
+  options?: string[]; // choice only
+}
+
+export type QuoterParams = Record<string, number | string>;
+
+export interface QuoterParamsResponse {
+  params: QuoterParams;
+  schema: QuoterParamSpec[];
+}
+
+export interface QuoterConn {
+  up: boolean;
+  reason?: string;
+  since: string;
+}
+
+export interface QuoterOrder {
+  externalId: string;
+  orderId?: string;
+  side: "BUY" | "SELL";
+  level: number;
+  price: string;
+  qty: string;
+  leaves: string;
+  executed: string;
+  pendingPrice?: string;
+  pendingQty?: string;
+  status: "NEW_PENDING" | "ACTIVE" | "MODIFY_PENDING" | "CANCEL_PENDING";
+  pendingMs?: number;
+}
+
+export interface QuoterTarget {
+  side: "BUY" | "SELL";
+  level: number;
+  price: string;
+  qty: string;
+}
+
+export interface QuoterEvent {
+  time: string;
+  kind: "info" | "warn" | "fill" | "reject" | "param";
+  message: string;
+}
+
+export interface QuoterMarket {
+  symbol: string;
+  instrumentId: string;
+  baseAssetId: string;
+  quoteAssetId: string;
+  baseSymbol: string;
+  quoteSymbol: string;
+  reference: string; // where fair value comes from: a Coinbase product (BTC-USD) or a Hyperliquid perp (hyperliquid:xyz:GOOGL)
+}
+
+// GET /api/books/{symbol}: one book in full.
+export interface QuoterStatus {
+  market: QuoterMarket;
+  enabled: boolean;
+  state: "quoting" | "waiting" | "stopped";
+  reason?: string;
+  params: QuoterParams;
+  reference: { mid: string; bid: string; ask: string; ageMs: number } | null;
+  bestBid: string | null;
+  bestAsk: string | null;
+  mid: string | null;
+  skewBps: number;
+  position: { qty: string; avgCost: string; realizedPnl: string; unrealizedPnl: string; volumeBase: string; volumeQuote: string };
+  // Free is shared by every book on the asset; budget and held are this book's.
+  balances: { freeBase: string; freeQuote: string; budgetBase: string; budgetQuote: string; heldBase: string; heldQuote: string; readAt: string | null };
+  orders: QuoterOrder[];
+  targets: QuoterTarget[];
+  stats: { creates: number; modifies: number; cancels: number; rejects: number; errors: number; fills: number };
+  events: QuoterEvent[];
+  warnings: string[];
+}
+
+// One line per book in the desk status.
+export interface QuoterBookSummary {
+  market: QuoterMarket;
+  enabled: boolean;
+  state: QuoterStatus["state"];
+  reason?: string;
+  reference: string | null;
+  position: string;
+  realizedPnl: string;
+  unrealizedPnl: string;
+  orders: number;
+  fills: number;
+  heldBase: string;
+  heldQuote: string;
+  maxQuoteAlloc: string;
+  maxBaseAlloc: string;
+}
+
+// One asset in the ledger every book shares: free = spendable - foreign holds - our holds.
+export interface QuoterAssetBalance {
+  assetId: string;
+  symbol: string;
+  spendable: string;
+  foreignHold: string;
+  ourHold: string;
+  free: string;
+}
+
+export interface QuoterListing {
+  symbol: string;
+  instrumentId: string;
+  baseSymbol: string;
+  quoteSymbol: string;
+  reference: string;
+}
+
+// GET /api/status: the whole quoter process.
+export interface QuoterDeskStatus {
+  mode: "live" | "paper";
+  environment: "production" | "uat" | "paper";
+  transport: "rest" | "fix" | "paper";
+  clientId: string;
+  startedAt: string;
+  connections: Partial<Record<"dropcopy" | "market" | "reference" | "orders", QuoterConn>>;
+  balances: QuoterAssetBalance[];
+  balancesReadAt: string | null;
+  books: QuoterBookSummary[];
+  available: QuoterListing[];
+  warnings: string[];
 }

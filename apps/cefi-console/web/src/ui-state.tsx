@@ -8,7 +8,11 @@ export interface TicketPrefill {
   nonce: number;
 }
 
+export type View = "trading" | "quoter";
+
 interface UiState {
+  view: View;
+  setView: (v: View) => void;
   symbol: string | undefined;
   setSymbol: (s: string) => void;
   ticket: TicketPrefill;
@@ -20,11 +24,18 @@ interface UiState {
 const Ctx = createContext<UiState | null>(null);
 
 export function UiProvider({ children }: { children: ReactNode }) {
+  const [view, setView] = useState<View>(() => (location.hash === "#quoter" ? "quoter" : "trading"));
   const [symbol, setSymbol] = useState<string>();
   const [ticket, setTicket] = useState<TicketPrefill>({ nonce: 0 });
   const [focusOrderId, setFocusOrderId] = useState<string>();
   const value = useMemo<UiState>(
     () => ({
+      view,
+      setView: (v: View) => {
+        setView(v);
+        // The hash keeps the screen across a reload.
+        history.replaceState(null, "", v === "quoter" ? "#quoter" : location.pathname + location.search);
+      },
       symbol,
       setSymbol,
       ticket,
@@ -32,7 +43,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
       focusOrderId,
       setFocusOrderId,
     }),
-    [symbol, ticket, focusOrderId],
+    [view, symbol, ticket, focusOrderId],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

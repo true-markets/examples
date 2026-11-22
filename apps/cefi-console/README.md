@@ -10,49 +10,23 @@ It runs out of the box against a built-in simulator, so you can see it working b
 
 ## What's on the screen
 
+One quoter runs every book, all on one shared view of the account's balances. The left column is the whole quoter; the right is the book you pick.
+
 | Area | What it shows | What you can do |
 | --- | --- | --- |
-| **Markets** | A tile per instrument: last, best bid/ask, 24h volume, how many of your orders are open there | Click to focus that symbol |
-| **Orders** | Every order from the last 24 hours, updated live from DROPCOPY. Sorted by last update, newest first, so anything just modified, filled or canceled floats up and flashes. Quick filters: Open / Filled / Canceled tabs, a multi-select of symbols, and search across order id, external id and symbol. Every column also has its own filter (see **Tables** below) | Modify price/qty, cancel one, cancel a selection, cancel all in the selected symbols |
-| **Book** | L2 depth for the focused symbol, 10/20/50 levels, with **your resting orders marked on their levels**: your size, how many orders, and what share of the level is yours. A footer counts any of your orders priced deeper than shown | Click a level to load its price into the ticket; cancel your orders at a level |
-| **Ticket** | Size in USD (the default) or as a quantity, with a line saying exactly what will be sent. CeFi: limit or market, GTC or IOC, post-only (ALO); a USD market order uses the exchange's `QUOTE_QTY` flag, a USD limit order is converted at the limit price and rounded down. DeFi: a market swap on the asset's DeFi listing, with a quote to confirm first | Place an order (in live mode, CeFi asks for a second click; DeFi asks you to confirm the quote) |
-| **Fills / Tape** | Your fills (REST history plus live DROPCOPY trades), and the public trade tape with your prints highlighted | Click a fill to focus its order |
-| **Balances** | Each asset split between your wallet and CeFi: free in wallet, allocated, CeFi balance, held by orders, tradable. Per wallet listing (per chain) | Allocate wallet funds to CeFi, release them back; watch each move go through its states under **Moves** |
-| **Header** | Connection health (heartbeat-backed), DEMO/UAT/LIVE badge | A light / dark / system theme switch (saved in this browser), and **Cancel all orders** (the exchange's own cancel-all) |
+| **Quoter bar** | LIVE / UAT / PAPER, the number of books, and the health of order entry (REST or FIX), the drop copy, market data and the reference | Start all (production asks first), Stop all |
+| **Books** | Every book with its state, orders, position and PnL | Pick one to see it; add a book from those the exchange offers, optionally naming its reference price |
+| **Shared balances** | Per asset: spendable, held by the books, held by orders the quoter didn't place, free | |
+| **Book bar** | Quoting, waiting (with the reason, e.g. "reference feed silent") or stopped, and the book's reference | Start quoting (production asks first), Stop and pull quotes, Remove a stopped book with nothing resting |
+| **Prices** | The reference price and its age, the mid after inventory skew, the exchange's best bid and ask | |
+| **Position** | The change in holdings since the quoter started (bought minus sold) against the max position change, average cost, realized and unrealized PnL, volume | |
+| **Budget** | What this book's bids and asks hold, out of what they may hold, and the shared free balance | |
+| **Activity** | Creates, modifies and cancels sent, fills, rejects, and how many order changes were modifies | |
+| **Ladder** | Each level's target next to the order resting there, with an arrow while a modify is in flight. Before you start, it previews what would be quoted | |
+| **Parameters** | Every strategy setting for this book, with its unit and what it does | Edit any of them and press Apply; the book uses them on its next cycle, and the quoter saves them |
+| **Events** | Fills, rejects, parameter changes and connection changes as they happen | |
 
-## Run it
-
-Node 22 or newer.
-
-```bash
-npm install
-```
-
-```bash
-npm run demo
-```
-
-Open http://localhost:5181. Demo mode runs a simulated exchange in the server process: market makers keep the books moving, and a stand-in "strategy" places, moves and cancels your orders so there is something to watch. Pause it from the header.
-
-### Against True Markets
-
-1. Create an API key at [app.truemarkets.co](https://app.truemarkets.co) (Settings, API keys) on an account enabled for CeFi trading. The browser downloads a JSON file with `key_id` and a P-256 `private_key`.
-2. Move that file into `.secrets/`. Everything in that folder is gitignored. To keep it elsewhere, set `TM_API_KEY_PATH`.
-3. `npm run dev`. With a key present the server runs live; without one it falls back to demo.
-
-Optional settings go in `.env` next to `package.json`:
-
-| Variable | Default | What it does |
-| --- | --- | --- |
-| `TM_MODE` | `live` if a key is found, else `demo` | Force `demo` or `live` |
-| `TM_ENV` | `production` | `uat` points every call at the UAT sandbox hosts |
-| `TM_API_KEY_PATH` | `.secrets` | The key file, or a folder holding exactly one |
-| `TM_CLIENT_ID` | from the token | Your CeFi client id, if the token doesn't carry one |
-| `TM_ORGANIZATION_ID` | from the token | Organization keys only, sent on signed WebSocket requests. A personal key doesn't need it |
-| `TM_ACCOUNT_LABEL` | your email, from the token's `sub` claim | What the header calls your account. Without an email in the token it falls back to the CeFi client's mnemonic, or the client id when the mnemonic is an opaque hash |
-| `API_PORT` | `4850` | The server's port; the dev web server proxies `/api` and `/ws` to it |
-
-For day-to-day use, run the production build: `npm run build && npm start`, then open http://localhost:4850. It serves the UI and the API from one port, and React's production mode is several times faster than `npm run dev`, which is for editing the code.
+The browser reads `/api/quoter/*` on this server, which calls the quoter (`server/quoter.ts`). If the quoter isn't running, the screen says so and how to start it.
 
 ## Tables
 
@@ -139,6 +113,7 @@ server/
   app.ts         HTTP routes, input checks, cancel-by-symbol
   relay.ts       /ws: one exchange connection per browser socket
   live.ts        the True Markets backend: REST calls, WebSocket signing
+  quoter.ts      calls a running cefi-quoter's management API
   tm/            key file, ES256 signing, token minting, errors
   sim/           the in-process exchange used by demo mode and the tests
 shared/          wire types, API types, order and book logic used by both sides
@@ -148,7 +123,7 @@ web/src/
   api.ts         REST reads and actions (TanStack Query)
   db.ts          TanStack DB collections for orders and fills, mirrored from the store
   table/         the shared table: filters, column menu, resizing, saved layout
-  components/    Orders, Book, Ticket, Trades, Balances, Header
+  components/    Orders, Book, Ticket, Trades, Balances, Header, Quoter
 ```
 
 ## Tests

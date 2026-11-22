@@ -12,6 +12,10 @@ import type {
   ModifyOrderInput,
   NewOrderInput,
   OrderRow,
+  QuoterDeskStatus,
+  QuoterParams,
+  QuoterParamsResponse,
+  QuoterStatus,
   Session,
 } from "../../shared/api.ts";
 import { isCustodyPending, isCustodySettled, isDefiDone } from "../../shared/api.ts";
@@ -219,3 +223,59 @@ export function useDefiOrder(orderId: string | undefined) {
   }, [done, qc]);
   return q;
 }
+
+// ---------- cefi-quoter ----------
+
+// Once a second while the Quoter screen is open. Each read is one local HTTP call to the quoter; it
+// never reaches True Markets.
+export const useQuoterStatus = (enabled: boolean) =>
+  useQuery({
+    queryKey: ["quoter-status"],
+    queryFn: () => call<QuoterDeskStatus>("GET", "/api/quoter/status"),
+    enabled,
+    refetchInterval: 1_000,
+    retry: false,
+  });
+
+const bookPath = (symbol: string) => `/api/quoter/books/${encodeURIComponent(symbol)}`;
+
+export const useQuoterBook = (symbol: string | undefined) =>
+  useQuery({
+    queryKey: ["quoter-book", symbol],
+    queryFn: () => call<QuoterStatus>("GET", bookPath(symbol!)),
+    enabled: !!symbol,
+    refetchInterval: 1_000,
+    retry: false,
+  });
+
+export const useQuoterParams = (symbol: string | undefined) =>
+  useQuery({ queryKey: ["quoter-params", symbol], queryFn: () => call<QuoterParamsResponse>("GET", `${bookPath(symbol!)}/params`), enabled: !!symbol, retry: false });
+
+export const useUpdateQuoterParams = () =>
+  useAction(({ symbol, patch }: { symbol: string; patch: QuoterParams }) => call<{ params: QuoterParams }>("PATCH", `${bookPath(symbol)}/params`, patch), {
+    success: (_r, { symbol, patch }) => `${symbol}: set ${Object.keys(patch).join(", ")}`,
+    invalidate: ["quoter-params", "quoter-book", "quoter-status"],
+  });
+
+// Start or stop one book, or every book when symbol is left out.
+export const useQuoterControl = () =>
+  useAction(
+    ({ action, symbol }: { action: "start" | "stop"; symbol?: string }) =>
+      call<{ enabled: boolean }>("POST", symbol ? `${bookPath(symbol)}/${action}` : `/api/quoter/${action}`),
+    {
+      success: (r, { symbol }) => `${symbol ?? "Every book"}: ${r.enabled ? "quoting started" : "stopped; pulling quotes"}`,
+      invalidate: ["quoter-status", "quoter-book"],
+    },
+  );
+
+export const useAddQuoterBook = () =>
+  useAction((input: { symbol: string; reference?: string }) => call<{ market: { symbol: string } }>("POST", "/api/quoter/books", input), {
+    success: (r) => `${r.market.symbol} added, stopped`,
+    invalidate: ["quoter-status"],
+  });
+
+export const useRemoveQuoterBook = () =>
+  useAction((symbol: string) => call("DELETE", bookPath(symbol)), {
+    success: (_r, symbol) => `${symbol} removed`,
+    invalidate: ["quoter-status"],
+  });

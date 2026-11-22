@@ -7,7 +7,7 @@ import { useTheme, type Theme } from "../theme.ts";
 import { useUi } from "../ui-state.tsx";
 import { ConfirmCancel } from "./ConfirmCancel.tsx";
 import { Logo } from "./Logo.tsx";
-import { Button, cx } from "./ui.tsx";
+import { Button, cx, Segmented } from "./ui.tsx";
 
 export function Header() {
   const { data: session } = useSession();
@@ -19,7 +19,7 @@ export function Header() {
   const [confirm, setConfirm] = useState<"all" | "symbol">();
   const open = orders.filter((o) => isActionable(o.status)).length;
   // The book that's selected, and your open orders in it.
-  const { symbol } = useUi();
+  const { symbol, view, setView } = useUi();
   const base = symbol?.split("-")[0];
   const openInSymbol = symbol ? orders.filter((o) => o.symbol === symbol && isActionable(o.status)).length : 0;
 
@@ -44,6 +44,16 @@ export function Header() {
         <span className="text-[11px] text-muted" title={session.clientId ? `CeFi client ${session.clientId}` : undefined}>
           {session.accountLabel ?? <span className="num">client {session.clientId}</span>}
         </span>
+      )}
+      {session?.quoter && (
+        <Segmented
+          value={view}
+          onChange={setView}
+          options={[
+            { value: "trading", label: "Trading" },
+            { value: "quoter", label: "Quoter" },
+          ]}
+        />
       )}
       <ConnectionDot />
       {/* Here, well away from "Cancel all orders" on the right. */}

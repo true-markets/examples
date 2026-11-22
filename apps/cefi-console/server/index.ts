@@ -6,6 +6,7 @@ import { createApp } from "./app.ts";
 import type { Backend } from "./backend.ts";
 import { loadConfig } from "./env.ts";
 import { LiveBackend } from "./live.ts";
+import { QuoterClient } from "./quoter.ts";
 import { attachRelay } from "./relay.ts";
 import { SimBackend } from "./sim/backend.ts";
 
@@ -20,7 +21,8 @@ if (config.mode === "live") {
   backend = sim;
 }
 
-const app = createApp(backend);
+const quoter = config.quoterUrl ? new QuoterClient(config.quoterUrl, config.quoterToken) : undefined;
+const app = createApp(backend, quoter);
 // After `npm run build`, the same port serves the web app.
 if (existsSync("dist")) {
   app.use("/*", serveStatic({ root: "./dist" }));
@@ -31,5 +33,6 @@ const server = serve({ fetch: app.fetch, port: config.port, hostname: "127.0.0.1
   const where = config.mode === "live" ? `LIVE on ${config.environment} with ${config.keyFile}` : "DEMO against the built-in simulator";
   console.log(`CeFi console server on http://127.0.0.1:${info.port} — ${where}`);
   if (config.mode === "live") console.log("Orders you place, modify or cancel here are real.");
+  if (quoter) console.log(`Quoter screen: managing the cefi-quoter at ${quoter.url}`);
 });
 attachRelay(server as Server, backend);

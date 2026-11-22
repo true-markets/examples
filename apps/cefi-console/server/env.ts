@@ -42,6 +42,9 @@ export interface Config {
   organizationId?: string;
   // Shown in the header instead of the client mnemonic, e.g. your email.
   accountLabel?: string;
+  // A running cefi-quoter's management API, for the Quoter screen.
+  quoterUrl?: string;
+  quoterToken?: string;
 }
 
 export function loadConfig(e: NodeJS.ProcessEnv = process.env): Config {
@@ -65,6 +68,8 @@ export function loadConfig(e: NodeJS.ProcessEnv = process.env): Config {
     clientId: e.TM_CLIENT_ID || undefined,
     organizationId: e.TM_ORGANIZATION_ID || undefined,
     accountLabel: e.TM_ACCOUNT_LABEL || undefined,
+    quoterUrl: quoterUrl(e.QUOTER_URL),
+    quoterToken: e.QUOTER_TOKEN || undefined,
   };
 }
 
@@ -78,4 +83,12 @@ function findKeyFile(path: string): string | undefined {
     throw new Error(`found ${found.length} key files in ${resolve(path)} (${found.join(", ")}): set TM_API_KEY_PATH to the one to use`);
   }
   return found[0] ? join(path, found[0]) : undefined;
+}
+
+// QUOTER_URL as written, or with http:// added when it's just host:port (127.0.0.1:4860), the way
+// the quoter prints its own address in ADMIN_ADDR.
+export function quoterUrl(raw: string | undefined): string | undefined {
+  const v = raw?.trim().replace(/\/+$/, "");
+  if (!v) return undefined;
+  return /^https?:\/\//i.test(v) ? v : `http://${v}`;
 }

@@ -46,3 +46,37 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  go:
+    name: ${{ matrix.example }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        example:
+          - apps/cefi-quoter
+    defaults:
+      run:
+        working-directory: ${{ matrix.example }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.example }}/go.mod
+          cache-dependency-path: ${{ matrix.example }}/go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Build
+        run: go build ./...

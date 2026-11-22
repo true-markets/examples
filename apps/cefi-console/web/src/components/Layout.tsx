@@ -6,7 +6,7 @@ import { cx } from "./ui.tsx";
 // Resizable panes. Drag a divider to resize, double-click it to reset; each split remembers its
 // sizes in localStorage. Sizes as strings are percentages, numbers are pixels.
 
-function Split({ id, orientation, children }: { id: string; orientation: "horizontal" | "vertical"; children: ReactNode }) {
+export function Split({ id, orientation, children }: { id: string; orientation: "horizontal" | "vertical"; children: ReactNode }) {
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({ id: `cefi-console:${id}`, storage: safeStorage() });
   return (
     <Group id={id} orientation={orientation} defaultLayout={defaultLayout} onLayoutChanged={onLayoutChanged} className="h-full w-full">
@@ -15,7 +15,7 @@ function Split({ id, orientation, children }: { id: string; orientation: "horizo
   );
 }
 
-function Divider({ vertical }: { vertical?: boolean }) {
+export function Divider({ vertical }: { vertical?: boolean }) {
   return (
     <Separator
       className={cx(
@@ -33,7 +33,7 @@ function Divider({ vertical }: { vertical?: boolean }) {
   );
 }
 
-const pane = "h-full min-h-0 min-w-0";
+export const pane = "h-full min-h-0 min-w-0";
 
 export function Workspace({ orders, fills, balances, book, ticket }: Record<"orders" | "fills" | "balances" | "book" | "ticket", ReactNode>) {
   return (
