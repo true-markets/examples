@@ -1,5 +1,5 @@
 import { CircleAlert, CircleHelp, Play, Plus, RotateCcw, Square, Trash2 } from "lucide-react";
-import { createContext, Fragment, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, Fragment, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Panel as Pane } from "react-resizable-panels";
 import { Divider, pane, Split } from "./Layout.tsx";
 import type {
@@ -589,13 +589,28 @@ function BookView({ symbol, live, paper }: { symbol: string; live: boolean; pape
         <Split id="quoter-detail" orientation="vertical">
           <Pane id="quoter-cards" defaultSize="26" minSize={80}>
             <div className={cx(pane, "overflow-y-auto")}>
-              <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-                <PricesCard s={s} paper={paper} />
-                <ReferenceCard s={s} />
-                <PositionCard s={s} />
-                <TakingCard s={s} />
-                <BalancesCard s={s} />
-                <ActivityCard s={s} />
+              <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${CARD_MIN}px, 1fr))` }}>
+                <CardPair
+                  id="prices"
+                  cards={[
+                    { key: "prices", label: "Prices", node: <PricesCard s={s} paper={paper} /> },
+                    { key: "reference", label: "Reference", node: <ReferenceCard s={s} /> },
+                  ]}
+                />
+                <CardPair
+                  id="position"
+                  cards={[
+                    { key: "position", label: "Position", node: <PositionCard s={s} /> },
+                    { key: "taking", label: "Taking", node: <TakingCard s={s} /> },
+                  ]}
+                />
+                <CardPair
+                  id="budget"
+                  cards={[
+                    { key: "budget", label: "Budget", node: <BalancesCard s={s} /> },
+                    { key: "activity", label: "Activity", node: <ActivityCard s={s} /> },
+                  ]}
+                />
               </div>
             </div>
           </Pane>
@@ -677,15 +692,70 @@ function ControlBar({ s, live }: { s: QuoterStatus; live: boolean }) {
 
 // ---------- cards ----------
 
-function Card({ title, children, action }: { title: ReactNode; children: React.ReactNode; action?: ReactNode }) {
+// The narrowest a card reads well. A pair of cards needs two of these side by side, or it shows one
+// at a time behind tabs.
+const CARD_MIN = 236;
+
+// Set by a pair of cards showing one at a time: the card's header shows the pair's tabs in place
+// of its title.
+const CardTabs = createContext<{ tabs: { key: string; label: string }[]; active: string; onSelect: (key: string) => void } | null>(null);
+
+function Card({ title, children, action, plain }: { title: ReactNode; children: React.ReactNode; action?: ReactNode; plain?: boolean }) {
+  const tabs = useContext(CardTabs);
   return (
-    <section className="rounded-md border border-line bg-panel px-3 py-2">
-      <h2 className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
-        {title}
+    <section className="h-full rounded-md border border-line bg-panel px-3 py-2">
+      <h2 className="mb-1.5 flex min-h-5 items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
+        {tabs ? (
+          <span role="tablist" className="-ml-1.5 flex gap-0.5">
+            {tabs.tabs.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                role="tab"
+                aria-selected={t.key === tabs.active}
+                onClick={() => tabs.onSelect(t.key)}
+                className={cx("rounded px-1.5 py-0.5 uppercase tracking-wider", t.key === tabs.active ? "bg-raised text-ink" : "text-faint hover:text-ink")}
+              >
+                {t.label}
+              </button>
+            ))}
+          </span>
+        ) : (
+          title
+        )}
         {action && <span className="ml-auto normal-case tracking-normal">{action}</span>}
       </h2>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">{children}</dl>
+      {plain ? <div className="text-xs">{children}</div> : <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">{children}</dl>}
     </section>
+  );
+}
+
+// Two related cards: side by side when there's room for both, otherwise one at a time with tabs in
+// its header. Each pair measures its own width, so the panel can be any size; the tab you pick is
+// remembered.
+function CardPair({ id, cards }: { id: string; cards: { key: string; label: string; node: ReactNode }[] }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [wide, setWide] = useState(true);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setWide(e!.contentRect.width >= 2 * CARD_MIN + 8));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const keys = cards.map((c) => c.key);
+  const [active, setActive] = useStoredChoice(`cefi-console:quoter-cards-${id}`, keys[0]!, keys);
+  // One element measured in both modes, so switching never loses the observer.
+  return (
+    <div ref={ref} className={wide ? "grid grid-cols-2 gap-2" : undefined}>
+      {wide ? (
+        cards.map((c) => <Fragment key={c.key}>{c.node}</Fragment>)
+      ) : (
+        <CardTabs.Provider value={{ tabs: cards.map(({ key, label }) => ({ key, label })), active, onSelect: setActive }}>
+          {cards.find((c) => c.key === active)?.node}
+        </CardTabs.Provider>
+      )}
+    </div>
   );
 }
 
@@ -739,14 +809,7 @@ function PositionCard({ s }: { s: QuoterStatus }) {
   const since = new Date(p.since);
   return (
     <Card
-      title={
-        <span title="Carried across quoter restarts, in the state file">
-          Position{" "}
-          <span className="normal-case tracking-normal text-faint">
-            since {since.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-          </span>
-        </span>
-      }
+      title="Position"
       action={
         <Button size="xs" tone="ghost" onClick={() => setConfirm(true)} title="Start this book's position, PnL, volume and counts from zero">
           <RotateCcw size={12} /> Reset
@@ -778,7 +841,10 @@ function PositionCard({ s }: { s: QuoterStatus }) {
           </p>
         </Modal>
       )}
-      <Row label="Change" title="Bought minus sold since the date above, against the max position change">
+      <Row label="Since" title="When this book's position started counting: its first start, or the last reset. Carried across quoter restarts">
+        {since.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+      </Row>
+      <Row label="Change" title="Bought minus sold since then, against the max position change">
         {signed(p.qty, 8)} {base}
         {max > 0 && (
           <span className="text-faint">
@@ -1285,14 +1351,16 @@ function ReferenceCard({ s }: { s: QuoterStatus }) {
   const v = s.blend;
   const flagged = v?.sources.filter((x) => x.action && x.action.kind !== "drift") ?? [];
   return (
-    <section className="rounded-md border border-line bg-panel px-3 py-2">
-      <h2 className="mb-1.5 flex items-center text-[11px] font-semibold uppercase tracking-wider text-muted">
-        Reference sources
-        <Button size="xs" tone="ghost" className="ml-auto" onClick={() => setEditing(true)}>
+    <Card
+      title="Reference sources"
+      plain
+      action={
+        <Button size="xs" tone="ghost" onClick={() => setEditing(true)}>
           Edit…
         </Button>
-      </h2>
-      <div className="num space-y-0.5 text-xs">
+      }
+    >
+      <div className="num space-y-0.5">
         {v?.sources.map((x) => (
           <div key={x.ref} className="flex items-baseline gap-2" title={x.note}>
             <span className={cx("truncate", x.state === "in" ? "" : x.state === "out" ? "text-danger" : "text-faint")}>{describeSource(x.ref)}</span>
@@ -1320,7 +1388,7 @@ function ReferenceCard({ s }: { s: QuoterStatus }) {
           onSave={(blend) => save.mutate({ symbol: s.market.symbol, blend }, { onSuccess: () => setEditing(false) })}
         />
       )}
-    </section>
+    </Card>
   );
 }
 
@@ -1329,17 +1397,16 @@ function ReferenceCard({ s }: { s: QuoterStatus }) {
 function TakingCard({ s }: { s: QuoterStatus }) {
   const v = s.taking;
   return (
-    <section className="rounded-md border border-line bg-panel px-3 py-2">
-      <h2 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted">Taking</h2>
+    <Card title="Taking" plain>
       {!v ? (
-        <div className="text-xs text-faint">waiting for a price</div>
+        <div className="text-faint">waiting for a price</div>
       ) : (
         <div className="space-y-2">
           <TakeSideRow t={v.sell} base={s.market.baseSymbol} />
           <TakeSideRow t={v.buy} base={s.market.baseSymbol} />
         </div>
       )}
-    </section>
+    </Card>
   );
 }
 
