@@ -5,8 +5,18 @@
 //	GET    /api/status                  every book at a glance, shared balances, connections, and
 //	                                    the books that can be added
 //	GET    /api/trades?limit=500        fills this run, newest first, with edge at fill and mark-outs
-//	POST   /api/books                   add a book, stopped: {"symbol": "ETH-USDC", "reference": "ETH-USD"}
-//	GET    /api/books/{symbol}          one book in full: ladder, orders, position, events
+//	POST   /api/books                   add a book, stopped: {"symbol": "ETH-USDC"}, optionally with
+//	                                    "reference": "ETH-USD" or a "blend" (below)
+//	GET    /api/books/{symbol}          one book in full: ladder, orders, position, events, and
+//	                                    each reference source
+//	PUT    /api/books/{symbol}/reference   change a book's blend: {"sources": [...], ...}
+//	GET    /api/references/{symbol}/suggest   the reference sources found for a book
+//	POST   /api/references/{symbol}/preview   a blend evaluated against live prices, not saved
+//
+// A blend: {"sources": [{"ref": "hyperliquid:xyz:GOOGL", "weight": 2},
+// {"ref": "kraken:GOOGLx/USD", "weight": 1, "multiplier": "1"}], "weighting": "fixed",
+// "maxDeviationBps": 100, "tokenMultiplier": "1"}. See reference/blend.go.
+//
 //	DELETE /api/books/{symbol}          remove a stopped book with nothing resting
 //	GET    /api/books/{symbol}/params   { params, schema }
 //	PATCH  /api/books/{symbol}/params   a partial update, e.g. {"spreadBps": 12}
@@ -28,6 +38,7 @@ import (
 	"strings"
 
 	"github.com/true-markets/examples/apps/cefi-quoter/quoter"
+	"github.com/true-markets/examples/apps/cefi-quoter/reference"
 )
 
 func Handler(d *quoter.Desk, token string, log *slog.Logger) http.Handler {
@@ -56,14 +67,20 @@ func Handler(d *quoter.Desk, token string, log *slog.Logger) http.Handler {
 	})
 	mux.HandleFunc("POST /api/books", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Symbol    string `json:"symbol"`
-			Reference string `json:"reference"`
+			Symbol    string                 `json:"symbol"`
+			Reference string                 `json:"reference"`
+			Blend     *reference.BlendConfig `json:"blend"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil {
 			fail(w, http.StatusBadRequest, err)
 			return
 		}
-		m, err := d.Add(r.Context(), strings.TrimSpace(req.Symbol), req.Reference, nil, false)
+		blend := req.Blend
+		if blend == nil && strings.TrimSpace(req.Reference) != "" {
+			single := reference.Single(req.Reference)
+			blend = &single
+		}
+		m, err := d.Add(r.Context(), strings.TrimSpace(req.Symbol), blend, nil, false)
 		if err != nil {
 			fail(w, http.StatusBadRequest, err)
 			return
@@ -72,9 +89,56 @@ func Handler(d *quoter.Desk, token string, log *slog.Logger) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]any{"market": m})
 	})
 	mux.HandleFunc("GET /api/books/{symbol}", func(w http.ResponseWriter, r *http.Request) {
-		if e := book(w, r); e != nil {
-			writeJSON(w, http.StatusOK, e.Status())
+		if book(w, r) == nil {
+			return
 		}
+		if s, ok := d.BookStatus(r.PathValue("symbol")); ok {
+			writeJSON(w, http.StatusOK, s)
+		}
+	})
+	readBlend := func(w http.ResponseWriter, r *http.Request) (reference.BlendConfig, bool) {
+		var b reference.BlendConfig
+		if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&b); err != nil {
+			fail(w, http.StatusBadRequest, err)
+			return b, false
+		}
+		return b, true
+	}
+	mux.HandleFunc("PUT /api/books/{symbol}/reference", func(w http.ResponseWriter, r *http.Request) {
+		if book(w, r) == nil {
+			return
+		}
+		b, ok := readBlend(w, r)
+		if !ok {
+			return
+		}
+		m, err := d.SetBlend(r.Context(), r.PathValue("symbol"), b)
+		if err != nil {
+			fail(w, http.StatusBadRequest, err)
+			return
+		}
+		log.Info("reference changed over the management API", "book", m.Symbol, "from", r.RemoteAddr)
+		writeJSON(w, http.StatusOK, map[string]any{"market": m})
+	})
+	mux.HandleFunc("GET /api/references/{symbol}/suggest", func(w http.ResponseWriter, r *http.Request) {
+		s, err := d.SuggestSources(r.Context(), r.PathValue("symbol"))
+		if err != nil {
+			fail(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"sources": s})
+	})
+	mux.HandleFunc("POST /api/references/{symbol}/preview", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := readBlend(w, r)
+		if !ok {
+			return
+		}
+		p, err := d.Preview(r.Context(), r.PathValue("symbol"), b)
+		if err != nil {
+			fail(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, p)
 	})
 	mux.HandleFunc("DELETE /api/books/{symbol}", func(w http.ResponseWriter, r *http.Request) {
 		if book(w, r) == nil {

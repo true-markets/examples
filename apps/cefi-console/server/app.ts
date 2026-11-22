@@ -86,11 +86,26 @@ export function createApp(backend: Backend, quoter?: QuoterClient): Hono {
   app.get("/api/quoter/status", async (c) => c.json(await needQuoter().status()));
   app.get("/api/quoter/trades", async (c) => c.json(await needQuoter().trades(Number(c.req.query("limit") ?? 500) || 500)));
   app.post("/api/quoter/books", async (c) => {
-    const body = await json<{ symbol?: unknown; reference?: unknown }>(c);
+    const body = await json<{ symbol?: unknown; reference?: unknown; blend?: unknown }>(c);
     if (typeof body?.symbol !== "string") throw new TmError("send the symbol of the book to add", 400);
     const reference = typeof body.reference === "string" ? body.reference.trim() : undefined;
-    return c.json(await needQuoter().addBook(bookSymbol(body.symbol), reference));
+    return c.json(await needQuoter().addBook(bookSymbol(body.symbol), reference, blendBody(body.blend, true)));
   });
+  // A blend is checked by the quoter; here it only has to be an object with a list of sources.
+  const blendBody = (raw: unknown, optional = false): unknown => {
+    if (raw === undefined && optional) return undefined;
+    if (typeof raw !== "object" || raw === null || !Array.isArray((raw as { sources?: unknown }).sources)) {
+      throw new TmError("send a reference blend: an object with a list of sources", 400);
+    }
+    return raw;
+  };
+  app.put("/api/quoter/books/:symbol/reference", async (c) =>
+    c.json(await needQuoter().setReference(bookSymbol(c.req.param("symbol")), blendBody(await json(c)))),
+  );
+  app.get("/api/quoter/references/:symbol/suggest", async (c) => c.json(await needQuoter().suggestSources(bookSymbol(c.req.param("symbol")))));
+  app.post("/api/quoter/references/:symbol/preview", async (c) =>
+    c.json(await needQuoter().previewReference(bookSymbol(c.req.param("symbol")), blendBody(await json(c)))),
+  );
   app.get("/api/quoter/books/:symbol", async (c) => c.json(await needQuoter().book(bookSymbol(c.req.param("symbol")))));
   app.delete("/api/quoter/books/:symbol", async (c) => c.json(await needQuoter().removeBook(bookSymbol(c.req.param("symbol")))));
   app.get("/api/quoter/books/:symbol/params", async (c) => c.json(await needQuoter().params(bookSymbol(c.req.param("symbol")))));

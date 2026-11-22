@@ -12,9 +12,12 @@ import type {
   ModifyOrderInput,
   NewOrderInput,
   OrderRow,
+  QuoterBlend,
   QuoterDeskStatus,
   QuoterParams,
   QuoterParamsResponse,
+  QuoterReferencePreview,
+  QuoterSource,
   QuoterStatus,
   QuoterTradesReport,
   Session,
@@ -279,9 +282,36 @@ export const useQuoterControl = () =>
   );
 
 export const useAddQuoterBook = () =>
-  useAction((input: { symbol: string; reference?: string }) => call<{ market: { symbol: string } }>("POST", "/api/quoter/books", input), {
+  useAction((input: { symbol: string; reference?: string; blend?: QuoterBlend }) => call<{ market: { symbol: string } }>("POST", "/api/quoter/books", input), {
     success: (r) => `${r.market.symbol} added, stopped`,
     invalidate: ["quoter-status"],
+  });
+
+// The reference sources the quoter finds for a book (perps, tokenized stocks, spot), for setup.
+export const useQuoterSuggest = (symbol: string | undefined) =>
+  useQuery({
+    queryKey: ["quoter-suggest", symbol],
+    queryFn: () => call<{ sources: QuoterSource[] }>("GET", `/api/quoter/references/${encodeURIComponent(symbol!)}/suggest`),
+    enabled: !!symbol,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+
+// A blend evaluated against live prices every two seconds while it's being set up; nothing saved.
+export const useQuoterPreview = (symbol: string | undefined, blend: QuoterBlend | undefined) =>
+  useQuery({
+    queryKey: ["quoter-preview", symbol, blend],
+    queryFn: () => call<QuoterReferencePreview>("POST", `/api/quoter/references/${encodeURIComponent(symbol!)}/preview`, blend),
+    enabled: !!symbol && !!blend && blend.sources.length > 0,
+    refetchInterval: 2_000,
+    placeholderData: (prev) => prev,
+    retry: false,
+  });
+
+export const useSetQuoterReference = () =>
+  useAction(({ symbol, blend }: { symbol: string; blend: QuoterBlend }) => call<{ market: { symbol: string } }>("PUT", `${bookPath(symbol)}/reference`, blend), {
+    success: (r) => `${r.market.symbol}: reference updated`,
+    invalidate: ["quoter-book", "quoter-status"],
   });
 
 export const useRemoveQuoterBook = () =>

@@ -255,7 +255,7 @@ func startDesk(t *testing.T, fx *fakeExchange) *Desk {
 
 func addBook(t *testing.T, desk *Desk, symbol string, p Params) *Engine {
 	t.Helper()
-	if _, err := desk.Add(context.Background(), symbol, "", &p, false); err != nil {
+	if _, err := desk.Add(context.Background(), symbol, nil, &p, false); err != nil {
 		t.Fatal(err)
 	}
 	e := desk.Engine(symbol)

@@ -30,6 +30,7 @@ type Params struct {
 	MaxQuoteAlloc      decimal.Decimal `json:"maxQuoteAlloc" param:"Max quote to use|quote|Most of the quote currency the bids may hold at once. 0 means all of the free balance|0|"`
 	MaxBaseAlloc       decimal.Decimal `json:"maxBaseAlloc" param:"Max base to use|size|Most of the base asset the asks may hold at once. 0 means all of the free balance|0|"`
 	RefStaleMs         int             `json:"refStaleMs" param:"Reference stale after|ms|Pull every quote if the reference price is older than this|500|60000"`
+	MaxRefGapBps       float64         `json:"maxRefGapBps" param:"Reference guard|bps|Stop quoting while other people's orders on this book sit this far past the reference: a bid this far above it, or an ask this far below. That is more likely a corporate action or multiplier the reference hasn't caught, or a bad reference, than an opportunity. 0 turns it off|0|5000"`
 	MinRequoteMs       int             `json:"minRequoteMs" param:"Min requote interval|ms|Smallest gap between two rounds of order changes|0|10000"`
 
 	// Taking: crossing the spread with an IOC instead of waiting to be filled. See taker.go.

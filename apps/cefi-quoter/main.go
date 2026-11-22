@@ -47,7 +47,7 @@ type venue struct {
 	// after the desk exists.
 	start func(ctx context.Context, d *quoter.Desk) error
 	onAdd func(quoter.Market)
-	// onTick sees every reference tick before the books do (paper mode fills from it).
+	// onTick sees every book's blended reference price (paper mode fills from it).
 	onTick func(symbol string, t reference.Tick)
 	// done is closed once the venue's connections have shut down.
 	done chan struct{}
@@ -87,23 +87,11 @@ func run() error {
 	feedCtx, stopFeeds := context.WithCancel(context.Background())
 	defer stopFeeds()
 
-	// Every book's reference price comes over one connection per source: Coinbase for crypto,
-	// Hyperliquid for tokenized stocks. The desk is created below; ticks before then have no book
-	// to go to.
+	// Every reference source streams over one connection per provider: Coinbase, Hyperliquid and
+	// Kraken. The desk blends each book's sources into its price. The desk is created below;
+	// ticks before then have no book to go to.
 	var desk *quoter.Desk
-	refs := map[string][]string{} // reference -> paper books priced off it
-	var refsMu sync.Mutex
-	onTick := func(t reference.Tick) {
-		if v.onTick != nil && !t.Heartbeat {
-			refsMu.Lock()
-			books := refs[t.Reference]
-			refsMu.Unlock()
-			for _, sym := range books {
-				v.onTick(sym, t)
-			}
-		}
-		desk.OnTick(t)
-	}
+	onTick := func(t reference.Tick) { desk.OnTick(t) }
 	// The reference connection is up while every source in use is up.
 	var refUp sync.Map
 	onRefState := func(source string) func(bool, string) {
@@ -125,12 +113,16 @@ func run() error {
 	ticker := &reference.Feeds{
 		Coinbase:    &reference.Coinbase{OnTick: onTick, OnState: onRefState("coinbase"), Log: log.With("component", "coinbase")},
 		Hyperliquid: &reference.HyperliquidFeed{OnTick: onTick, OnState: onRefState("hyperliquid"), Log: log.With("component", "hyperliquid")},
+		Kraken:      &reference.KrakenFeed{OnTick: onTick, OnState: onRefState("kraken"), Log: log.With("component", "kraken")},
 	}
 
 	dc := v.desk
 	dc.IDPrefix = cfg.IDPrefix
 	dc.Defaults = cfg.Params
 	dc.CheckReference = reference.Check
+	dc.Subscribe = ticker.Add
+	dc.Suggest = reference.Suggest
+	dc.OnReference = v.onTick
 	// Tokenized stocks price off Hyperliquid, not Coinbase. The public asset catalog says which
 	// listings are stocks. Paper mode uses production's catalog.
 	catalogURL := tm.Environments["production"].Catalog
@@ -140,15 +132,7 @@ func run() error {
 	dc.Catalog = stockReferences(ctx, catalogURL, dc.Catalog, log)
 	dc.Log = log
 	dc.Save = func(b map[string]quoter.BookConfig) error { return saveBooks(cfg.BooksFile, b) }
-	dc.OnAdd = func(m quoter.Market) {
-		refsMu.Lock()
-		refs[m.Reference] = append(refs[m.Reference], m.Symbol)
-		refsMu.Unlock()
-		ticker.Add(m.Reference)
-		if v.onAdd != nil {
-			v.onAdd(m)
-		}
-	}
+	dc.OnAdd = v.onAdd
 	desk = quoter.NewDesk(dc)
 
 	go ticker.Run(feedCtx)
@@ -158,7 +142,7 @@ func run() error {
 
 	for _, b := range saved {
 		p := b.Params
-		if _, err := desk.Add(ctx, b.Symbol, b.Reference, &p, cfg.AutoStart); err != nil {
+		if _, err := desk.Add(ctx, b.Symbol, b.Blend, &p, cfg.AutoStart); err != nil {
 			// One bad book shouldn't keep the others from running. It stays in the file.
 			log.Error("couldn't add a saved book; fix or remove it in "+cfg.BooksFile, "book", b.Symbol, "err", err)
 		}
@@ -357,8 +341,10 @@ func stockReferences(ctx context.Context, catalogURL string, listings []quoter.L
 		if !ok {
 			continue
 		}
+		out[i].Stock, out[i].Underlying = true, ""
 		if ticker, ok := s.Ticker(); ok {
 			out[i].Reference = reference.Hyperliquid(reference.StockDex + ":" + ticker)
+			out[i].Underlying = ticker
 		} else {
 			out[i].Reference = "" // an issuer whose naming rule isn't known: name it when adding
 		}
@@ -397,7 +383,7 @@ func listBooks(ctx context.Context, rest *tm.REST) ([]quoter.Listing, error) {
 			BaseAssetID: string(inst.Info.BaseAssetID), QuoteAssetID: string(inst.Info.QuoteAssetID),
 			BaseSymbol: base, QuoteSymbol: quote,
 			// The same base asset in USD on Coinbase: BTC-USDC -> BTC-USD.
-			Reference: symBase + "-USD",
+			Reference: symBase + "-USD", Underlying: symBase,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Symbol < out[j].Symbol })

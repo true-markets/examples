@@ -29,6 +29,9 @@ beforeAll(async () => {
     if (req.url === "/api/books" && req.method === "POST") return res.end(JSON.stringify({ market: JSON.parse(body) }));
     if (req.url === "/api/books/BTC-USDC") return res.end(JSON.stringify({ state: "stopped", params }));
     if (req.url === "/api/books/BTC-USDC/start" || req.url === "/api/stop") return res.end(JSON.stringify({ enabled: req.url.endsWith("start") }));
+    if (req.url === "/api/references/BTC-USDC/suggest") return res.end(JSON.stringify({ sources: [{ ref: "BTC-USD", weight: 1 }] }));
+    if (req.url === "/api/references/BTC-USDC/preview" && req.method === "POST") return res.end(JSON.stringify({ symbol: "BTC-USDC", blend: JSON.parse(body) }));
+    if (req.url === "/api/books/BTC-USDC/reference" && req.method === "PUT") return res.end(JSON.stringify({ market: { blend: JSON.parse(body) } }));
     res.writeHead(404).end("{}");
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
@@ -67,6 +70,15 @@ describe("quoter passthrough", () => {
     expect((await req<{ enabled: boolean }>("POST", "/api/quoter/stop")).body.enabled).toBe(false);
     expect(seen.every((s) => s.auth === "Bearer tok")).toBe(true);
     expect(seen.find((s) => s.method === "PATCH")).toMatchObject({ path: "/api/books/BTC-USDC/params", body: '{"spreadBps":25}' });
+  });
+
+  it("passes reference blends through: suggest, preview, set", async () => {
+    const req = app(new QuoterClient(url, "tok"));
+    const blend = { sources: [{ ref: "BTC-USD", weight: 2 }, { ref: "kraken:BTC/USD", weight: 1 }] };
+    expect((await req<{ sources: unknown[] }>("GET", "/api/quoter/references/BTC-USDC/suggest")).body.sources).toHaveLength(1);
+    expect((await req<{ blend: unknown }>("POST", "/api/quoter/references/BTC-USDC/preview", blend)).body.blend).toEqual(blend);
+    expect((await req<{ market: { blend: unknown } }>("PUT", "/api/quoter/books/BTC-USDC/reference", blend)).body.market.blend).toEqual(blend);
+    expect((await req("PUT", "/api/quoter/books/BTC-USDC/reference", { sources: "BTC-USD" })).status).toBe(400);
   });
 
   it("refuses a path that isn't a book symbol before calling the quoter", async () => {

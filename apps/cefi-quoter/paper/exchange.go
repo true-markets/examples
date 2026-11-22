@@ -100,7 +100,7 @@ func (x *Exchange) Listings() []quoter.Listing {
 		sym := asset + "-" + x.QuoteAsset
 		out = append(out, quoter.Listing{
 			Symbol: sym, InstrumentID: InstrumentID(sym), BaseAssetID: asset, QuoteAssetID: x.QuoteAsset,
-			BaseSymbol: asset, QuoteSymbol: x.QuoteAsset, Reference: asset + "-USD",
+			BaseSymbol: asset, QuoteSymbol: x.QuoteAsset, Reference: asset + "-USD", Underlying: asset,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Symbol < out[j].Symbol })

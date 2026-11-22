@@ -24,8 +24,24 @@ export class QuoterClient {
     return this.call("GET", `/api/books/${encodeURIComponent(symbol)}`);
   }
 
-  addBook(symbol: string, reference?: string): Promise<unknown> {
-    return this.call("POST", "/api/books", { symbol, reference: reference || undefined });
+  // Add a book: the listing's default reference, one named reference, or a blend of sources.
+  addBook(symbol: string, reference?: string, blend?: unknown): Promise<unknown> {
+    return this.call("POST", "/api/books", { symbol, reference: reference || undefined, blend });
+  }
+
+  // Change a book's reference blend: sources, weights, multipliers.
+  setReference(symbol: string, blend: unknown): Promise<unknown> {
+    return this.call("PUT", `/api/books/${encodeURIComponent(symbol)}/reference`, blend);
+  }
+
+  // The reference sources the quoter found for a book.
+  suggestSources(symbol: string): Promise<unknown> {
+    return this.call("GET", `/api/references/${encodeURIComponent(symbol)}/suggest`);
+  }
+
+  // A blend evaluated against live prices, without saving it.
+  previewReference(symbol: string, blend: unknown): Promise<unknown> {
+    return this.call("POST", `/api/references/${encodeURIComponent(symbol)}/preview`, blend);
   }
 
   removeBook(symbol: string): Promise<unknown> {
@@ -55,7 +71,7 @@ export class QuoterClient {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(5_000),
+        signal: AbortSignal.timeout(path.startsWith("/api/references") || method === "PUT" || method === "POST" ? 20_000 : 5_000),
       });
     } catch (err) {
       throw new TmError(`the quoter at ${this.url} isn't answering (${(err as Error).message}). Is cefi-quoter running?`, 502);

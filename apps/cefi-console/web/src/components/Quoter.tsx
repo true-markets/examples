@@ -22,8 +22,10 @@ import {
   useQuoterStatus,
   useRemoveQuoterBook,
   useSession,
+  useSetQuoterReference,
   useUpdateQuoterParams,
 } from "../api.ts";
+import { describeBlend, describeSource, ReferenceEditor } from "./ReferenceEditor.tsx";
 import { price as fmtPrice, qty as fmtQty, usd as fmtUsd } from "../format.ts";
 import { Button, cx, Empty, inputClass, Modal, Panel, StatusBadge } from "./ui.tsx";
 
@@ -172,10 +174,9 @@ function Help({ children }: { children: ReactNode }) {
   return useContext(ShowHelp) ? <>{children}</> : null;
 }
 
-// "BTC-USD" is a Coinbase product; "hyperliquid:xyz:GOOGL" is a Hyperliquid perp (tokenized stocks).
-export function describeReference(ref: string): string {
-  return ref.startsWith("hyperliquid:") ? `Hyperliquid ${ref.slice("hyperliquid:".length)}` : `Coinbase ${ref}`;
-}
+// "BTC-USD" is a Coinbase product, "hyperliquid:xyz:GOOGL" a Hyperliquid perp, "kraken:GOOGLx/USD" a
+// Kraken pair.
+export const describeReference = describeSource;
 
 function stateTone(state: QuoterStatus["state"]) {
   return state === "quoting" ? "bg-buy-soft text-buy" : state === "waiting" ? "bg-accent-soft text-accent" : "bg-raised text-muted";
@@ -366,7 +367,7 @@ function BookRow({ b, active, onSelect }: { b: QuoterBookSummary; active: boolea
 function AddBook({ d, onAdded }: { d: QuoterDeskStatus; onAdded: (s: string) => void }) {
   const add = useAddQuoterBook();
   const [symbol, setSymbol] = useState("");
-  const [reference, setReference] = useState("");
+  const [editing, setEditing] = useState(false);
   const listing = d.available.find((l) => l.symbol === symbol);
   if (d.available.length === 0) return null;
   return (
@@ -374,17 +375,7 @@ function AddBook({ d, onAdded }: { d: QuoterDeskStatus; onAdded: (s: string) => 
       className="space-y-1.5 border-t border-line px-3 py-2"
       onSubmit={(e) => {
         e.preventDefault();
-        if (!symbol) return;
-        add.mutate(
-          { symbol, reference: reference.trim() || undefined },
-          {
-            onSuccess: () => {
-              onAdded(symbol);
-              setSymbol("");
-              setReference("");
-            },
-          },
-        );
+        if (symbol) setEditing(true);
       }}
     >
       <div className="text-[11px] font-semibold uppercase tracking-wider text-muted">Add a book</div>
@@ -398,19 +389,31 @@ function AddBook({ d, onAdded }: { d: QuoterDeskStatus; onAdded: (s: string) => 
           ))}
         </select>
         <Button tone="primary" type="submit" disabled={!symbol || add.isPending}>
-          <Plus size={12} /> Add
+          <Plus size={12} /> Add…
         </Button>
       </div>
-      {listing && (
-        <label className="block text-[11px] text-faint">
-          Reference price
-          <input
-            className={cx(inputClass, "mt-0.5 w-full")}
-            placeholder={listing.reference || "required: hyperliquid:xyz:TICKER"}
-            value={reference}
-            onChange={(e) => setReference(e.target.value)}
-          />
-        </label>
+      <Help>{listing && <p className="text-[11px] text-faint">Next: choose its reference price sources, with a live preview.</p>}</Help>
+      {editing && listing && (
+        <ReferenceEditor
+          symbol={listing.symbol}
+          fallbackRef={listing.reference}
+          title={`Add ${listing.symbol}: reference price`}
+          saveLabel="Add book"
+          saving={add.isPending}
+          onClose={() => setEditing(false)}
+          onSave={(blend) =>
+            add.mutate(
+              { symbol: listing.symbol, blend },
+              {
+                onSuccess: () => {
+                  setEditing(false);
+                  onAdded(listing.symbol);
+                  setSymbol("");
+                },
+              },
+            )
+          }
+        />
       )}
     </form>
   );
@@ -507,8 +510,9 @@ function BookView({ symbol, live, paper }: { symbol: string; live: boolean; pape
         <Split id="quoter-detail" orientation="vertical">
           <Pane id="quoter-cards" defaultSize="26" minSize={80}>
             <div className={cx(pane, "overflow-y-auto")}>
-              <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
                 <PricesCard s={s} paper={paper} />
+                <ReferenceCard s={s} />
                 <PositionCard s={s} />
                 <TakingCard s={s} />
                 <BalancesCard s={s} />
@@ -558,7 +562,7 @@ function ControlBar({ s, live }: { s: QuoterStatus; live: boolean }) {
       </span>
       {s.reason && s.state !== "stopped" && <span className="text-xs text-accent">{s.reason}</span>}
       <span className="text-sm font-semibold">{symbol}</span>
-      <span className="text-[11px] text-muted">reference {describeReference(s.market.reference)}</span>
+      <span className="text-[11px] text-muted">reference {describeBlend(s.market.blend, s.market.reference)}</span>
       <div className="ml-auto flex items-center gap-2">
         {!s.enabled && s.orders.length === 0 && (
           <Button tone="ghost" size="xs" disabled={remove.isPending} onClick={() => remove.mutate(symbol)} title="Stop managing this book">
@@ -623,7 +627,7 @@ function PricesCard({ s, paper }: { s: QuoterStatus; paper: boolean }) {
   const ref = s.reference;
   return (
     <Card title="Prices">
-      <Row label="Reference" title={`${describeReference(s.market.reference)}; the age is since its price last changed`}>
+      <Row label="Reference" title={`${describeBlend(s.market.blend, s.market.reference)}; the age is since its price last changed`}>
         {ref ? fmtPrice(ref.mid) : "—"} <span className="text-faint">{ref ? `${(ref.ageMs / 1000).toFixed(1)}s` : ""}</span>
       </Row>
       <Row label="Quoting mid" title="The reference after inventory skew">
@@ -1113,6 +1117,55 @@ function TotalsBar({ d }: { d: QuoterDeskStatus }) {
           ))}
           <span className="text-faint">bps</span>
         </span>
+      )}
+    </section>
+  );
+}
+
+// ---------- reference sources ----------
+
+// The book's reference: each source's adjusted price and part in the blend, and anything that
+// looks like a corporate action. Edit opens the same editor as adding a book, on this book's blend.
+function ReferenceCard({ s }: { s: QuoterStatus }) {
+  const [editing, setEditing] = useState(false);
+  const save = useSetQuoterReference();
+  const v = s.blend;
+  const flagged = v?.sources.filter((x) => x.action && x.action.kind !== "drift") ?? [];
+  return (
+    <section className="rounded-md border border-line bg-panel px-3 py-2">
+      <h2 className="mb-1.5 flex items-center text-[11px] font-semibold uppercase tracking-wider text-muted">
+        Reference sources
+        <Button size="xs" tone="ghost" className="ml-auto" onClick={() => setEditing(true)}>
+          Edit…
+        </Button>
+      </h2>
+      <div className="num space-y-0.5 text-xs">
+        {v?.sources.map((x) => (
+          <div key={x.ref} className="flex items-baseline gap-2" title={x.note}>
+            <span className={cx("truncate", x.state === "in" ? "" : x.state === "out" ? "text-danger" : "text-faint")}>{describeSource(x.ref)}</span>
+            <span className="ml-auto">{x.adjusted ? fmtPrice(x.adjusted) : "—"}</span>
+            <span className="w-12 text-right text-faint">{x.state === "in" ? `${(x.share * 100).toFixed(0)}%` : x.state}</span>
+          </div>
+        ))}
+        {v && Number(v.tokenMultiplier) !== 1 && <div className="text-[11px] text-faint">× token multiplier {v.tokenMultiplier}</div>}
+        {v?.problem && <div className="text-[11px] text-danger">{v.problem}</div>}
+        {flagged.map((x) => (
+          <div key={x.ref} className="text-[11px] text-accent">
+            {describeSource(x.ref)}: {x.action!.kind === "split" ? "likely split" : "out of line"} (try multiplier {x.action!.multiplier})
+          </div>
+        ))}
+      </div>
+      {editing && (
+        <ReferenceEditor
+          symbol={s.market.symbol}
+          initial={s.market.blend}
+          fallbackRef={s.market.reference}
+          title={`${s.market.symbol}: reference price`}
+          saveLabel="Save"
+          saving={save.isPending}
+          onClose={() => setEditing(false)}
+          onSave={(blend) => save.mutate({ symbol: s.market.symbol, blend }, { onSuccess: () => setEditing(false) })}
+        />
       )}
     </section>
   );

@@ -99,7 +99,19 @@ export function Segmented<T extends string>({ value, options, onChange }: { valu
   );
 }
 
-export function Modal({ title, onClose, children, footer }: { title: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode }) {
+export function Modal({
+  title,
+  onClose,
+  children,
+  footer,
+  wide,
+}: {
+  title: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+  footer?: ReactNode;
+  wide?: boolean;
+}) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -107,14 +119,19 @@ export function Modal({ title, onClose, children, footer }: { title: ReactNode; 
   }, [onClose]);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onMouseDown={onClose}>
-      <div className="w-full max-w-md rounded-lg border border-line bg-panel shadow-2xl" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+      <div
+        className={cx("flex max-h-full w-full flex-col rounded-lg border border-line bg-panel shadow-2xl", wide ? "max-w-6xl" : "max-w-md")}
+        onMouseDown={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+      >
         <header className="flex items-center border-b border-line px-4 py-3">
           <h3 className="text-sm font-semibold">{title}</h3>
           <button type="button" className="ml-auto text-muted hover:text-ink" onClick={onClose} aria-label="Close">
             <X size={16} />
           </button>
         </header>
-        <div className="space-y-3 px-4 py-4">{children}</div>
+        <div className="min-h-0 space-y-3 overflow-y-auto px-4 py-4">{children}</div>
         {footer && <footer className="flex justify-end gap-2 border-t border-line px-4 py-3">{footer}</footer>}
       </div>
     </div>

@@ -7,6 +7,7 @@ import (
 
 	"github.com/shopspring/decimal"
 	"github.com/true-markets/examples/apps/cefi-quoter/quoter"
+	"github.com/true-markets/examples/apps/cefi-quoter/reference"
 )
 
 // .env.example must load as it is, with inline comments, into a valid paper-mode config.
@@ -33,7 +34,8 @@ func TestEnvExampleLoads(t *testing.T) {
 	}
 
 	// The books file round-trips, and a book's own settings win over .env's.
-	saved := map[string]quoter.BookConfig{"ETH-USDC": {Reference: "ETH-USD", Params: cfg.Params}}
+	eth := reference.Single("ETH-USD")
+	saved := map[string]quoter.BookConfig{"ETH-USDC": {Blend: &eth, Params: cfg.Params}}
 	p := cfg.Params
 	p.SpreadBps = 25
 	saved["BTC-USDC"] = quoter.BookConfig{Params: p}
@@ -41,7 +43,14 @@ func TestEnvExampleLoads(t *testing.T) {
 		t.Fatal(err)
 	}
 	books, _, err := loadBooks(cfg.BooksFile, cfg.Params)
-	if err != nil || len(books) != 2 || books[0].Symbol != "BTC-USDC" || books[0].Params.SpreadBps != 25 || books[1].Reference != "ETH-USD" {
+	if err != nil || len(books) != 2 || books[0].Symbol != "BTC-USDC" || books[0].Params.SpreadBps != 25 || books[0].Blend != nil || books[1].Blend.Sources[0].Ref != "ETH-USD" {
+		t.Fatalf("%+v %v", books, err)
+	}
+	// A book saved before blends named one reference; it reads as a blend of that source.
+	if err := os.WriteFile(cfg.BooksFile, []byte(`{"books": {"ETH-USDC": {"reference": "ETH-USD"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if books, _, err := loadBooks(cfg.BooksFile, cfg.Params); err != nil || books[0].Blend == nil || len(books[0].Blend.Sources) != 1 || books[0].Blend.Sources[0].Ref != "ETH-USD" {
 		t.Fatalf("%+v %v", books, err)
 	}
 	if err := os.WriteFile(cfg.BooksFile, []byte(`{"books": {"BTC-USDC": {"params": {"spredBps": 1}}}}`), 0o600); err != nil {

@@ -285,7 +285,74 @@ export interface QuoterMarket {
   quoteAssetId: string;
   baseSymbol: string;
   quoteSymbol: string;
-  reference: string; // where fair value comes from: a Coinbase product (BTC-USD) or a Hyperliquid perp (hyperliquid:xyz:GOOGL)
+  reference: string; // the main source of fair value: a Coinbase product (BTC-USD), hyperliquid:xyz:GOOGL, kraken:GOOGLx/USD
+  blend: QuoterBlend;
+}
+
+// A book's reference price: a weighted average of one or more sources, each lined up with a
+// multiplier. See apps/cefi-quoter/reference/blend.go.
+export interface QuoterSource {
+  ref: string;
+  weight: number; // 0 watches the source: checked against the others, not part of the price
+  multiplier?: string; // turns the source's price into the price of one share; 1 if left out
+}
+
+export interface QuoterBlend {
+  sources: QuoterSource[];
+  weighting?: "fixed" | "depth";
+  maxDeviationBps?: number; // a source further than this from the others is left out
+  tokenMultiplier?: string; // shares per token of the book; 1 if left out
+}
+
+export interface QuoterCorporateAction {
+  kind: "split" | "multiplier" | "drift";
+  ratio: number;
+  multiplier: string; // the source multiplier that would line it up
+  text: string;
+}
+
+export interface QuoterSourceView {
+  ref: string;
+  name: string;
+  weight: number;
+  multiplier: string;
+  bid: string | null;
+  ask: string | null;
+  mid: string | null;
+  adjusted: string | null; // mid × multiplier
+  spreadBps: number | null;
+  depthUsd: string | null;
+  ageMs: number | null;
+  share: number; // of the blended price, 0 to 1
+  gapBps: number | null; // against the other sources
+  state: "in" | "watch" | "waiting" | "stale" | "out";
+  note?: string;
+  action?: QuoterCorporateAction;
+}
+
+export interface QuoterBlendView {
+  sources: QuoterSourceView[];
+  weighting: "fixed" | "depth";
+  maxDeviationBps: number;
+  tokenMultiplier: string;
+  perShare: string | null;
+  mid: string | null; // the book's fair value: per share × token multiplier
+  bid: string | null;
+  ask: string | null;
+  used: number;
+  problem?: string;
+}
+
+// POST /api/references/{symbol}/preview
+export interface QuoterReferencePreview {
+  symbol: string;
+  blend: QuoterBlendView;
+  bookBid: string | null;
+  bookAsk: string | null;
+  bookMid: string | null;
+  bookGapBps: number | null;
+  tokenMultiplier: string | null; // what would line the blend up with the book's own mid
+  warnings: string[];
 }
 
 // GET /api/books/{symbol}: one book in full.
@@ -309,6 +376,7 @@ export interface QuoterStatus {
   events: QuoterEvent[];
   warnings: string[];
   taking: QuoterTakeView | null;
+  blend?: QuoterBlendView;
 }
 
 // How close one side is to a take. BUY takes the best ask; SELL hits the best bid.
@@ -417,6 +485,8 @@ export interface QuoterListing {
   baseSymbol: string;
   quoteSymbol: string;
   reference: string;
+  underlying?: string;
+  stock?: boolean;
 }
 
 // GET /api/status: the whole quoter process.

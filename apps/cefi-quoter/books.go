@@ -11,6 +11,7 @@ import (
 
 	"github.com/shopspring/decimal"
 	"github.com/true-markets/examples/apps/cefi-quoter/quoter"
+	"github.com/true-markets/examples/apps/cefi-quoter/reference"
 )
 
 // The books file lists the books to quote and each one's settings. The quoter writes it whenever
@@ -21,22 +22,29 @@ import (
 //	{
 //	  "books": {
 //	    "BTC-USDC": {"params": {"quoteSize": "0.0002", "maxQuoteAlloc": "2000"}},
-//	    "ETH-USDC": {"reference": "ETH-USD", "params": {"spreadBps": 15}}
+//	    "GOOGLC-USDC": {"blend": {"sources": [
+//	      {"ref": "hyperliquid:xyz:GOOGL", "weight": 2},
+//	      {"ref": "kraken:GOOGLx/USD", "weight": 1, "multiplier": "1"}
+//	    ]}}
 //	  }
 //	}
+//
+// A book with no blend uses the listing's default reference. "reference": "ETH-USD", from before
+// blends, still reads as a blend of that one source.
 type booksFile struct {
 	Books map[string]bookEntry `json:"books"`
 }
 
 type bookEntry struct {
-	Reference string          `json:"reference,omitempty"`
-	Params    json.RawMessage `json:"params,omitempty"`
+	Reference string                 `json:"reference,omitempty"`
+	Blend     *reference.BlendConfig `json:"blend,omitempty"`
+	Params    json.RawMessage        `json:"params,omitempty"`
 }
 
 type savedBook struct {
-	Symbol    string
-	Reference string
-	Params    quoter.Params
+	Symbol string
+	Blend  *reference.BlendConfig // nil: the listing's default
+	Params quoter.Params
 }
 
 // retired are settings an earlier version saved that no longer exist, and what replaced them.
@@ -90,7 +98,12 @@ func loadBooks(path string, defaults quoter.Params) (books []savedBook, warnings
 		if _, set := keys["takeMaxSize"]; !set && p.SizeUnit == quoter.SizeInBase && defaults.SizeUnit != quoter.SizeInBase {
 			p.TakeMaxSize = baseTakeSize(p)
 		}
-		out = append(out, savedBook{Symbol: sym, Reference: b.Reference, Params: p})
+		blend := b.Blend
+		if blend == nil && b.Reference != "" {
+			single := reference.Single(b.Reference)
+			blend = &single
+		}
+		out = append(out, savedBook{Symbol: sym, Blend: blend, Params: p})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Symbol < out[j].Symbol })
 	sort.Strings(warnings)

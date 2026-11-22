@@ -15,12 +15,13 @@ One quoter runs every book, all on one shared view of the account's balances. Th
 | Area | What it shows | What you can do |
 | --- | --- | --- |
 | **Quoter bar** | LIVE / UAT / PAPER, the number of books, and the health of order entry (REST or FIX), the drop copy, market data and the reference | Start all (production asks first), Stop all |
-| **Books** | Every book with its state, orders, position and PnL | Pick one to see it; add a book from those the exchange offers, optionally naming its reference price |
+| **Books** | Every book with its state, orders, position and PnL | Pick one to see it; add a book from those the exchange offers, then choose its reference sources in an editor that previews them live |
 | **Shared balances** | Per asset: spendable, held by the books, held by orders the quoter didn't place, free, each with its value in USDC under it, and a dollar total | |
 | **Totals** | Across every book: PnL (realized and open), volume, books quoting, requests, fills, and edge at fill with its +30s and +300s mark-outs | |
 | **Trades** (the Books / Trades switch) | Every fill this run: side, maker level or which taker, price, notional, fair value at the time, edge at fill, the +30s and +300s mark-outs, and how much edge was kept. A summary per book and for all books above it | |
 | **Book bar** | Quoting, waiting (with the reason, e.g. "reference feed silent") or stopped, and the book's reference | Start quoting (production asks first), Stop and pull quotes, Remove a stopped book with nothing resting |
 | **Prices** | The reference price and its age, the mid after inventory skew, the exchange's best bid and ask | |
+| **Reference sources** | Each source in the book's blend: its price lined up by its multiplier, its share of the price, and any that's left out or looks like a split or multiplier | **Edit…** changes sources, weights and multipliers, previewing each change against live prices before it's saved |
 | **Position** | The change in holdings since the quoter started (bought minus sold) against the max position change, average cost, realized and unrealized PnL, volume | |
 | **Taking** | Each side: the price a take would cross to and its size, the edge on offer against the edge needed (as a bar), and what's in the way: off, no edge (and how many bps away), below cost, too small, no funds, cool-down | |
 | **Budget** | What this book's bids and asks hold, out of what they may hold, and the shared free balance | |

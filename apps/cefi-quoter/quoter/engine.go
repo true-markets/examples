@@ -23,7 +23,10 @@ type Market struct {
 	QuoteAssetID string `json:"quoteAssetId"`
 	BaseSymbol   string `json:"baseSymbol"`
 	QuoteSymbol  string `json:"quoteSymbol"`
-	Reference    string `json:"reference"` // the Coinbase product for fair value, e.g. BTC-USD
+	// Reference is the main source of fair value (BTC-USD, hyperliquid:xyz:GOOGL); Blend is every
+	// source, with weights and multipliers (see reference/blend.go).
+	Reference string                `json:"reference"`
+	Blend     reference.BlendConfig `json:"blend"`
 }
 
 // Venue is the part of the exchange the quoter reads over REST: balances, and our resting orders
@@ -78,6 +81,7 @@ type Engine struct {
 	enabled     bool
 	started     time.Time
 	ref         *reference.Tick
+	refProblem  string // why the blended reference has no price, if it hasn't
 	bestBid     *decimal.Decimal
 	bestAsk     *decimal.Decimal
 	bestBidQty  decimal.Decimal
@@ -163,11 +167,24 @@ func (e *Engine) Nudge() {
 func (e *Engine) OnReference(t reference.Tick) {
 	e.mu.Lock()
 	e.ref = &t
+	e.refProblem = ""
 	e.mu.Unlock()
 	if e.journal != nil {
 		e.journal.Mark(e.market.Symbol, t.Mid, time.Now())
 	}
 	e.Nudge()
+}
+
+// OnReferenceProblem says the reference has no price right now, and why: its sources disagree, or
+// are all stale. The book stops quoting until a price comes back.
+func (e *Engine) OnReferenceProblem(reason string) {
+	e.mu.Lock()
+	changed := e.refProblem != reason
+	e.refProblem = reason
+	e.mu.Unlock()
+	if changed {
+		e.Nudge()
+	}
 }
 
 // OnEBBO takes the exchange's best bid and offer for this book.
@@ -450,12 +467,16 @@ func (e *Engine) haltReasonLocked() (reason string, pull bool) {
 		return "drop copy not connected", true
 	case !e.conns[ConnMarket].Up:
 		return "market data not connected", true
+	case e.refProblem != "":
+		return e.refProblem, true
 	case e.ref == nil:
 		return "waiting for the reference price", true
 	case time.Since(e.ref.Seen) > time.Duration(e.params.RefStaleMs)*time.Millisecond:
 		return fmt.Sprintf("reference feed silent (%s)", time.Since(e.ref.Seen).Round(100*time.Millisecond)), true
 	case time.Since(e.ref.Time) > refMaxPriceAge:
 		return fmt.Sprintf("reference hasn't traded in %s", time.Since(e.ref.Time).Round(time.Second)), true
+	case e.refGapLocked() != "":
+		return e.refGapLocked(), true
 	case !e.ledger.Fetched(e.market.BaseAssetID, e.market.QuoteAssetID):
 		return "waiting for balances", false
 	case e.ebboAt.IsZero() && time.Since(e.started) < ebboGrace:
@@ -464,6 +485,27 @@ func (e *Engine) haltReasonLocked() (reason string, pull bool) {
 		return "reading back orders", false
 	}
 	return "", false
+}
+
+// refGapLocked trips the reference guard: the book's best bid sits well above the reference, or
+// its best ask well below. Someone crossing that far is more likely right about the price than
+// handing out money: the token may carry a multiplier (after a split, or dividends paid as
+// shares) that the reference doesn't, or the reference itself may be wrong or pushed around.
+// Quoting on would sell to that bid, or buy from that ask, far through fair value.
+func (e *Engine) refGapLocked() string {
+	g := e.params.MaxRefGapBps
+	if g <= 0 || e.ref == nil || !e.ref.Mid.IsPositive() {
+		return ""
+	}
+	mid := e.ref.Mid
+	bps := func(x decimal.Decimal) float64 { return x.Sub(mid).Div(mid).Mul(tenK).InexactFloat64() }
+	switch {
+	case e.bestBid != nil && bps(*e.bestBid) > g:
+		return fmt.Sprintf("reference guard: the book's best bid is %.0f bps above the reference; check the reference for a corporate action or multiplier", bps(*e.bestBid))
+	case e.bestAsk != nil && -bps(*e.bestAsk) > g:
+		return fmt.Sprintf("reference guard: the book's best ask is %.0f bps below the reference; check the reference for a corporate action or multiplier", -bps(*e.bestAsk))
+	}
+	return ""
 }
 
 func (e *Engine) connUp(name string) bool {

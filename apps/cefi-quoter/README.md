@@ -51,7 +51,7 @@ npm run dev
 
 A **Trading | Quoter** switch appears in the header. The Quoter screen has:
 
-- **Books**: every book, with its state, orders, position and PnL. Pick one from the list of books the exchange offers to add it, optionally naming a different reference price. **Start all** and **Stop all** act on every book.
+- **Books**: every book, with its state, orders, position and PnL. Pick one from the list of books the exchange offers to add it, then set up its reference sources with a live preview (see [Reference prices](#reference-prices)). **Start all** and **Stop all** act on every book.
 - **Shared balances**: the ledger every book draws on: spendable, held by the books, held by orders the quoter didn't place, and free.
 - For the selected book: its state and the reason for it, the ladder (where each order rests next to where the strategy wants it), position and PnL, its budget, activity, an event feed, and a field for every parameter. Change one, press **Apply**, and the book uses it on its next cycle; it's saved to `books.json` too. **Start quoting** asks for confirmation on production. **Stop and pull quotes** cancels that book's orders. A stopped book with nothing resting can be removed.
 
@@ -85,7 +85,7 @@ The connection is plain FIX over TCP, not TLS: the private network is what prote
 ```
                       ┌───────────────────────── cefi-quoter ─────────────────────────┐
                       │  desk: routes each message to its book                        │
- Coinbase/Hyperliquid▶│   ┌─ book BTC-USDC ─────────────────────────────┐             │
+ Coinbase/HL/Kraken ─▶│   ┌─ book BTC-USDC ─────────────────────────────┐             │
   (one connection,    │   │ reference ─▶ ladder ─▶ plan ─▶ reserve ─▶ send ──REST/FIX──▶ exchange
    every product)     │   │ EBBO, drop copy ─▶ order book, position      │   ▲         │
  CeFi WS: EBBO ──────▶│   └──────────────────────────────────────────────┘   │         │
@@ -151,7 +151,9 @@ The budget for each side is the free balance plus what the book's own orders alr
 
 ### Reference prices
 
-| Book | Reference | Example |
+Each book's fair value is a **blend**: a weighted average of one or more sources, each lined up with a multiplier ([reference/blend.go](reference/blend.go)). A new book starts from its listing's default:
+
+| Book | Default reference | Example |
 | --- | --- | --- |
 | Crypto | Coinbase Exchange's ticker for the base asset in USD | BTC-USDC prices off `BTC-USD` |
 | Tokenized stock | Hyperliquid's perp on the stock, on its `xyz` equities dex | GOOGLC-USDC (Alphabet) prices off `hyperliquid:xyz:GOOGL` |
@@ -160,7 +162,53 @@ Coinbase Exchange lists no stocks, so a stock book can't use the crypto default.
 
 Why Hyperliquid: real-time quotes on the stock itself need an account or come 15 minutes late. Hyperliquid's equity perps are keyless, pushed every block, open 24/7 and deep. The cost is that a perp's mid carries its funding premium, usually a few bps, which this quoter doesn't remove.
 
-Any book can name its own reference when it's added: a Coinbase product (`ETH-USD`) or `hyperliquid:` and a coin (`hyperliquid:xyz:TSLA`). Each is checked with its source before the book is added, so a typo is refused instead of leaving the book with no price.
+#### Several sources
+
+One source is a single point of failure, and a thin one is easy to push around: whoever moves it moves your quotes. A blend checks every source against the others. Sources, all keyless and streamed:
+
+| Source | Name | Quotes |
+| --- | --- | --- |
+| Coinbase Exchange | `BTC-USD` | crypto spot |
+| Hyperliquid, any dex | `hyperliquid:BTC`, `hyperliquid:xyz:GOOGL`, `hyperliquid:io:NVDA` | perps on crypto and, on the HIP-3 dexes, on stocks |
+| Kraken | `kraken:BTC/USD`, `kraken:GOOGLx/USD` | crypto spot, and xStocks (Backed's tokenized stocks) |
+
+The quoter suggests every source it finds for a book's underlying (`GET /api/references/{symbol}/suggest`). A Kraken pair that's post-only (orders rest, nothing matches, so the price is only indicative) is suggested at weight 0. How the blend works:
+
+- **Weights.** *Fixed* uses each source's weight as set; *by depth* multiplies it by the dollars shown at the source's touch, so a deeper market counts for more. Weight 0 **watches** a source: it's shown and checked, but doesn't move the price.
+- **Outliers are left out.** Each source is measured against the median of the others (with two, against the other one). One further than the **max deviation** (100 bps by default) drops out of the price until it comes back, and the book's event feed says so. If the sources can't agree at all, or every one is stale, the book stops quoting rather than guess.
+- **Stale sources drop out** after `REF_STALE_MS` of silence, or a minute with no price change (a closed market's last price, repeated).
+
+#### Multipliers and corporate actions
+
+Every source quotes something slightly different. A perp tracks the share price. A tokenized stock is one token, and an issuer may define that as more or less than one share: after a split some issuers change the shares per token rather than the number of tokens, and some pay dividends as more shares per token. Providers apply these on different days, or not at all. So:
+
+- each source's **multiplier** turns its price into the price of one share (1 unless it quotes something else; a token worth 1/10 of a share has 10);
+- the book's **token multiplier** turns the price of a share into the price of one token of the book you quote.
+
+A multiplier that should be set but isn't shows up as a source sitting a fixed ratio from the others, so the blend looks for exactly that. A ratio near a split ratio (2, 3, 4, 10, 1/2, …) is flagged as a **likely split**. Anything else out of line is flagged as a **likely multiplier**. Each flag comes with the multiplier that would line the source up. A smaller gap that's held (25 bps or more) is noted as **drift**: normal for a perp's funding premium, but if it lasts for days it's more likely dividends accruing in a token's multiplier.
+
+The **reference guard** (`REF_GUARD_BPS`, 500 by default) catches what the sources can't: the book you're quoting into trading far through the blend. That covers a bid well above it or an ask well below, as when your token takes a split or multiplier your sources haven't. Someone crossing that far is more likely right about the price than handing out money, so the book stops quoting until the gap closes or you fix the reference.
+
+#### Setting one up
+
+On the Quoter screen, **Add…** opens the reference editor, filled with the suggested sources. **Edit…** on a book's Reference sources card opens the same editor. It previews every change against live prices before anything is saved, showing:
+- each source's bid and ask and its adjusted price;
+- its spread and depth, and its gap to the others;
+- its share of the blend, and any corporate-action flag, with a button that applies the suggested multiplier.
+
+Under the sources it shows the blended price per share, times the token multiplier, giving fair value. For a book that's already added, it also shows the book's own mid on True Markets, with the token multiplier that would line them up.
+
+The same works over the API:
+
+```bash
+curl http://127.0.0.1:4860/api/references/GOOGLC-USDC/suggest
+curl -X POST http://127.0.0.1:4860/api/references/GOOGLC-USDC/preview -d '{"sources": [
+  {"ref": "hyperliquid:xyz:GOOGL", "weight": 2}, {"ref": "kraken:GOOGLx/USD", "weight": 1}]}'
+curl -X PUT http://127.0.0.1:4860/api/books/GOOGLC-USDC/reference -d '{"sources": [...], "weighting": "depth",
+  "maxDeviationBps": 100, "tokenMultiplier": "1"}'
+```
+
+Every source is checked with its provider before it's used, so a typo is refused instead of leaving the book with no price. Sources you preview stay subscribed until the quoter restarts.
 
 ### Many books, one balance
 
@@ -201,7 +249,8 @@ Everything goes in `.env`; [.env.example](.env.example) lists all of it with com
 | `SKEW_BPS` | 5 | Mid shift back toward where you started, at the max position change |
 | `MAX_QUOTE_ALLOC` | 0 | Most quote this book's bids may hold (USDC, so already dollars); 0 means any free balance. Set one per book when books share a quote asset |
 | `MAX_BASE_ALLOC` | 0 | Most of the base asset this book's asks may hold, in `SIZE_UNIT`; 0 means any free balance |
-| `REF_STALE_MS` | 3000 | Pull quotes when the reference feed has been silent this long |
+| `REF_STALE_MS` | 3000 | Leave a reference source out after this long silent; pull quotes when every source is |
+| `REF_GUARD_BPS` | 500 | **Reference guard**: stop quoting while other people's orders on the book sit this far past the reference (a bid this far above it, an ask this far below). 0 turns it off |
 | `MIN_REQUOTE_MS` | 100 | Smallest gap between rounds of order changes |
 | `PROFIT_TAKER` | true | Cross to close inventory when the book pays at least the (scaled) take edge, never below cost |
 | `TAKEOUT` | false | Cross to build inventory when the book sits at least `TAKE_EDGE_BPS` past fair value |
@@ -221,10 +270,16 @@ Position and PnL count each book's fills since this run started, at average cost
 {
   "books": {
     "BTC-USDC": { "params": { "sizeUnit": "quote", "quoteSize": "20", "maxPosition": "500", "maxQuoteAlloc": "4000" } },
-    "ETH-USDC": { "reference": "ETH-USD", "params": { "sizeUnit": "base", "quoteSize": "0.005", "maxQuoteAlloc": "4000" } }
+    "ETH-USDC": { "reference": "ETH-USD", "params": { "sizeUnit": "base", "quoteSize": "0.005", "maxQuoteAlloc": "4000" } },
+    "GOOGLC-USDC": { "blend": { "sources": [
+      { "ref": "hyperliquid:xyz:GOOGL", "weight": 2 },
+      { "ref": "kraken:GOOGLx/USD", "weight": 1, "multiplier": "1" }
+    ], "tokenMultiplier": "1" } }
   }
 }
 ```
+
+A book with neither `reference` nor `blend` uses its listing's default; `reference` is a blend of that one source.
 
 ## Management API
 
@@ -232,7 +287,10 @@ Position and PnL count each book's fills since this run started, at average cost
 curl http://127.0.0.1:4860/api/status                    # every book, totals, shared balances, connections, books on offer
 curl http://127.0.0.1:4860/api/trades?limit=100          # fills this run, newest first, with edge at fill and mark-outs
 curl -X POST http://127.0.0.1:4860/api/books -d '{"symbol": "ETH-USDC"}'   # add a book, stopped ("reference" optional)
-curl http://127.0.0.1:4860/api/books/ETH-USDC            # one book: ladder, orders, position, events
+curl http://127.0.0.1:4860/api/books/ETH-USDC            # one book: ladder, orders, position, events, reference sources
+curl http://127.0.0.1:4860/api/references/ETH-USDC/suggest   # reference sources found for the book
+curl -X POST http://127.0.0.1:4860/api/references/ETH-USDC/preview -d '{"sources": [...]}'   # a blend on live prices, not saved
+curl -X PUT http://127.0.0.1:4860/api/books/ETH-USDC/reference -d '{"sources": [...]}'      # change the book's blend
 curl http://127.0.0.1:4860/api/books/ETH-USDC/params     # its settings, and a schema describing each one
 curl -X PATCH http://127.0.0.1:4860/api/books/ETH-USDC/params -d '{"spreadBps": 15, "levels": 2}'
 curl -X POST http://127.0.0.1:4860/api/books/ETH-USDC/start
@@ -252,7 +310,8 @@ config.go          .env and environment variables
 books.go           books.json: the books to quote and their settings
 tm/                True Markets: key file and ES256 signing, tokens, CeFi REST, CeFi WebSocket
 fix/               a small FIX 5.0 SP2 order-entry session (no QuickFIX, no config files)
-reference/         reference prices: Coinbase for crypto, Hyperliquid for tokenized stocks
+reference/         reference prices: Coinbase, Hyperliquid and Kraken feeds, and blends of them
+  blend.go         weighted average, outliers, multipliers, corporate-action detection
 quoter/
   desk.go          every book in the process: adds and removes them, routes feeds, reads balances
   ledger.go        the balances every book shares, and Reserve
@@ -278,4 +337,4 @@ No test touches the network. The engine runs against a fake exchange that answer
 
 This is a Go rewrite of an internal Python market maker. The parts that make a quoter work carried over: every book in one process on one shared balance ledger, the modify-first reconcile, pre-registering requests ahead of the drop copy, clamping against our own and the exchange's orders, budget accounting that counts our own holds, FIX ClOrdID chaining, and pulling quotes when a feed goes stale.
 
-The profit taker and takeout came over too ([Taking](#taking-getting-unstuck)). Left out on purpose, because each is a strategy of its own and they obscure the core loop: the momentum taker, the Kraken and Hyperliquid cross-checks, volatility- and imbalance-driven spreads, the trade journal and mark-outs, position recovery across restarts, multi-maker scenarios and the terminal UI. Each would plug in as another input to `BuildLadder` or another kind of `Step`.
+The profit taker and takeout came over too ([Taking](#taking-getting-unstuck)). Left out on purpose, because each is a strategy of its own and they obscure the core loop: the momentum taker, volatility- and imbalance-driven spreads, the trade journal and mark-outs, position recovery across restarts, multi-maker scenarios and the terminal UI. Each would plug in as another input to `BuildLadder` or another kind of `Step`.

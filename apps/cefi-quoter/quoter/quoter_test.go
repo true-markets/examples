@@ -274,7 +274,7 @@ func TestParamsMerge(t *testing.T) {
 	if _, err := p.Merge([]byte(`{"nope": 1}`)); err == nil {
 		t.Fatal("unknown key accepted")
 	}
-	if len(Schema()) != 20 {
+	if len(Schema()) != 21 {
 		t.Fatalf("schema has %d params", len(Schema()))
 	}
 }

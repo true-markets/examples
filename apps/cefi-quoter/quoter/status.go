@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
+	"github.com/true-markets/examples/apps/cefi-quoter/reference"
 )
 
 // Status is everything the management API shows about one book right now.
@@ -27,6 +28,9 @@ type Status struct {
 	Events    []Event          `json:"events"`
 	Warnings  []string         `json:"warnings"`
 	Taking    *TakeView        `json:"taking"` // how close each side is to a take
+	// Blend is the reference's sources right now: each one's price, its part in the blend, and
+	// anything that looks like a corporate action. Set by the desk.
+	Blend *reference.BlendView `json:"blend,omitempty"`
 }
 
 type Price struct {
