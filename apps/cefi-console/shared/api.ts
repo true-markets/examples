@@ -1,7 +1,13 @@
 // What this app's server returns to the browser under /api. The server reshapes the True Markets
 // responses into these so the UI has one order shape whether a row came from REST or DROPCOPY.
 
-import type { OrderEvent, OrderStatus, OrderType, Side, TimeInForce } from "./wire.ts";
+import type {
+  OrderEvent,
+  OrderStatus,
+  OrderType,
+  Side,
+  TimeInForce,
+} from "./wire.ts";
 
 export type Mode = "live" | "demo";
 
@@ -30,7 +36,12 @@ export interface Instrument {
   quantity24h?: string;
   // The DeFi listing of the same asset, when there is one. DeFi takes market orders only.
   // decimals is the token's on-chain precision, the only limit on a DeFi quantity.
-  defi?: { assetId: string; chain: string | null; symbol: string; decimals?: number };
+  defi?: {
+    assetId: string;
+    chain: string | null;
+    symbol: string;
+    decimals?: number;
+  };
 }
 
 // A DeFi market order goes through the gateway: it is quoted first, then signed and executed.
@@ -62,7 +73,14 @@ export interface DefiQuote {
 
 export interface DefiOrderState {
   orderId: string;
-  status: "initialized" | "pending" | "cancel_pending" | "complete" | "canceled" | "active" | "failed";
+  status:
+    | "initialized"
+    | "pending"
+    | "cancel_pending"
+    | "complete"
+    | "canceled"
+    | "active"
+    | "failed";
   side?: "BUY" | "SELL";
   symbol?: string;
   chain?: string | null;
@@ -186,7 +204,13 @@ export interface Balances {
   cefiSymbols: string[];
 }
 
-export type AllocationStatus = "allocating" | "crediting" | "releasing" | "completed" | "rejected" | "stranded";
+export type AllocationStatus =
+  | "allocating"
+  | "crediting"
+  | "releasing"
+  | "completed"
+  | "rejected"
+  | "stranded";
 export type ReleaseStatus = "debiting" | "completed" | "rejected" | "stranded";
 
 export interface CustodyMove {
@@ -369,12 +393,37 @@ export interface QuoterStatus {
   skewBps: number;
   // Since is when the position started counting (the book's first start, or its last reset); it
   // carries across quoter restarts.
-  position: { qty: string; avgCost: string; realizedPnl: string; unrealizedPnl: string; volumeBase: string; volumeQuote: string; since: string };
+  position: {
+    qty: string;
+    avgCost: string;
+    realizedPnl: string;
+    unrealizedPnl: string;
+    volumeBase: string;
+    volumeQuote: string;
+    since: string;
+  };
   // Free is shared by every book on the asset; budget and held are this book's.
-  balances: { freeBase: string; freeQuote: string; budgetBase: string; budgetQuote: string; heldBase: string; heldQuote: string; readAt: string | null };
+  balances: {
+    freeBase: string;
+    freeQuote: string;
+    budgetBase: string;
+    budgetQuote: string;
+    heldBase: string;
+    heldQuote: string;
+    readAt: string | null;
+  };
   orders: QuoterOrder[];
   targets: QuoterTarget[];
-  stats: { creates: number; modifies: number; cancels: number; rejects: number; errors: number; fills: number; takes: number; takeFills: number };
+  stats: {
+    creates: number;
+    modifies: number;
+    cancels: number;
+    rejects: number;
+    errors: number;
+    fills: number;
+    takes: number;
+    takeFills: number;
+  };
   events: QuoterEvent[];
   warnings: string[];
   taking: QuoterTakeView | null;
@@ -464,6 +513,8 @@ export interface QuoterBookSummary {
   fills: number;
   heldBase: string;
   heldQuote: string;
+  budgetBase: string;
+  budgetQuote: string;
   maxQuoteAlloc: string;
   maxBaseAlloc: string;
   volumeQuote: string;
@@ -498,7 +549,9 @@ export interface QuoterDeskStatus {
   transport: "rest" | "fix" | "paper";
   clientId: string;
   startedAt: string;
-  connections: Partial<Record<"dropcopy" | "market" | "reference" | "orders", QuoterConn>>;
+  connections: Partial<
+    Record<"dropcopy" | "market" | "reference" | "orders", QuoterConn>
+  >;
   balances: QuoterAssetBalance[];
   balancesReadAt: string | null;
   books: QuoterBookSummary[];

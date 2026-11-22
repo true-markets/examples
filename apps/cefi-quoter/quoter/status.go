@@ -213,6 +213,8 @@ type Summary struct {
 	Fills         int              `json:"fills"`
 	HeldBase      decimal.Decimal  `json:"heldBase"`
 	HeldQuote     decimal.Decimal  `json:"heldQuote"`
+	BudgetBase    decimal.Decimal  `json:"budgetBase"`
+	BudgetQuote   decimal.Decimal  `json:"budgetQuote"`
 	MaxQuoteAlloc decimal.Decimal  `json:"maxQuoteAlloc"`
 	MaxBaseAlloc  decimal.Decimal  `json:"maxBaseAlloc"`
 	VolumeQuote   decimal.Decimal  `json:"volumeQuote"`
@@ -226,6 +228,7 @@ func (e *Engine) Summary() Summary {
 		Market: s.Market, Enabled: s.Enabled, State: s.State, Reason: s.Reason,
 		Position: s.Position.Qty, RealizedPnl: s.Position.RealizedPnl, UnrealizedPnl: s.Position.UnrealizedPnl,
 		Orders: len(s.Orders), Fills: s.Stats.Fills, HeldBase: s.Balances.HeldBase, HeldQuote: s.Balances.HeldQuote,
+		BudgetBase: s.Balances.BudgetBase, BudgetQuote: s.Balances.BudgetQuote,
 		MaxQuoteAlloc: s.Params.MaxQuoteAlloc, MaxBaseAlloc: s.Params.MaxBaseAlloc,
 		BaseCapped:  s.Params.MaxBaseAlloc.IsPositive(),
 		VolumeQuote: s.Position.VolumeQuote, Stats: s.Stats,
