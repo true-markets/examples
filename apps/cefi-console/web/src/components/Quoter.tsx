@@ -370,12 +370,12 @@ function BookRow({ b, active, onSelect }: { b: QuoterBookSummary; active: boolea
         <span className="ml-auto">PnL {signedUsd(pnl)}</span>
       </div>
       <div className="num mt-1 flex items-center gap-3 text-[11px] text-muted">
-        <span title={`Bids hold ${fmtQty(b.heldQuote, 2)} of ${fmtQty(b.budgetQuote, 2)} ${quoteUnit(b.market.quoteSymbol)}`}>
-          Bids
+        <span title={`The bids hold ${fmtQty(b.heldQuote, 2)} of ${fmtQty(b.budgetQuote, 2)} ${b.market.quoteSymbol}`}>
+          {b.market.quoteSymbol}
           <BudgetUse held={b.heldQuote} budget={b.budgetQuote} />
         </span>
-        <span title={`Asks hold ${fmtQty(b.heldBase, 4)} of ${fmtQty(b.budgetBase, 4)} ${b.market.baseSymbol}`}>
-          Asks
+        <span title={`The asks hold ${fmtQty(b.heldBase, 4)} of ${fmtQty(b.budgetBase, 4)} ${b.market.baseSymbol}`}>
+          {b.market.baseSymbol}
           <BudgetUse held={b.heldBase} budget={b.budgetBase} />
         </span>
       </div>
@@ -923,16 +923,16 @@ function BudgetUse({ held, budget }: { held: string | undefined; budget: string 
 function BalancesCard({ s }: { s: QuoterStatus }) {
   const b = s.balances;
   const base = s.market.baseSymbol;
-  const quote = quoteUnit(s.market.quoteSymbol);
+  const quote = s.market.quoteSymbol;
   return (
     <Card title="Budget">
       <Row
-        label="Bids"
+        label={quote}
         title={`${quote} the bids hold now, out of what they may hold: what they hold plus the shared free balance, capped by Max quote to use`}
       >
         {fmtQty(b.heldQuote, 2)} / {fmtQty(b.budgetQuote, 2)} <BudgetUse held={b.heldQuote} budget={b.budgetQuote} />
       </Row>
-      <Row label="Asks" title={`${base} the asks hold now, out of what they may hold`}>
+      <Row label={base} title={`${base} the asks hold now, out of what they may hold`}>
         {fmtQty(b.heldBase, 4)} / {fmtQty(b.budgetBase, 4)} <BudgetUse held={b.heldBase} budget={b.budgetBase} />
       </Row>
       <Row label={`Free ${quote}`} title="Unused in the ledger every book draws on">
