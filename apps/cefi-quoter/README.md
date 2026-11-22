@@ -73,11 +73,12 @@ Most people should quote over REST. FIX is there for firms that already run FIX,
 ```bash
 ORDER_TRANSPORT=fix
 FIX_ADDR=host:port          # from support@truemarkets.co; FIX runs over a private connection
+FIX_TLS=false               # the default: plain FIX, not TLS
 FIX_SENDER_COMP_ID=yourfirm-mm1
 FIX_TARGET_COMP_ID=...      # assigned by the exchange
 ```
 
-Every book shares one FIX session; each order names its symbol. The session uses the same API key file as REST. The Logon carries your `key_id` as Username (553) and, as Password (554), an ES256 signature over `SendingTime + MsgType + MsgSeqNum + SenderCompID + TargetCompID + Username` ([fix/session.go](fix/session.go)). Only order entry moves to FIX. Order state still comes from the WebSocket drop copy, so the rest of the quoter can't tell the difference.
+The connection is plain FIX over TCP, not TLS: the private network is what protects it. If the server logs "Received data that is not a FIX message" and drops you, the quoter is speaking TLS to it; check `FIX_TLS=false`. Every book shares one FIX session; each order names its symbol. The session uses the same API key file as REST. The Logon carries your `key_id` as Username (553) and, as Password (554), an ES256 signature over `SendingTime + MsgType + MsgSeqNum + SenderCompID + TargetCompID + Username` ([fix/session.go](fix/session.go)). Only order entry moves to FIX. Order state still comes from the WebSocket drop copy, so the rest of the quoter can't tell the difference.
 
 ## How it works
 

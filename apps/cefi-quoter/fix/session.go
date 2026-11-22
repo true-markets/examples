@@ -20,7 +20,7 @@ type Signer interface {
 
 type Config struct {
 	Addr         string // host:port, from True Markets support
-	TLS          bool
+	TLS          bool   // off for True Markets: FIX is plain TCP over a private connection
 	SenderCompID string // yours to choose; a session stays bound to the key that first logged on
 	TargetCompID string // assigned by the exchange
 	KeyID        string // your API key's key_id, sent as Username (553)

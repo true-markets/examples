@@ -143,7 +143,7 @@ func loadConfig() (Config, error) {
 
 	c.FIX = FIXConfig{
 		Addr:               get("FIX_ADDR", ""),
-		TLS:                getBool("FIX_TLS", true),
+		TLS:                getBool("FIX_TLS", false),
 		SenderCompID:       get("FIX_SENDER_COMP_ID", ""),
 		TargetCompID:       get("FIX_TARGET_COMP_ID", ""),
 		HeartBtInt:         getInt("FIX_HEARTBEAT_SECS", 30),
