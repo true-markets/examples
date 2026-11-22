@@ -374,7 +374,19 @@ export interface QuoterStatus {
   balances: { freeBase: string; freeQuote: string; budgetBase: string; budgetQuote: string; heldBase: string; heldQuote: string; readAt: string | null };
   orders: QuoterOrder[];
   targets: QuoterTarget[];
-  stats: { creates: number; modifies: number; cancels: number; rejects: number; errors: number; fills: number; takes: number; takeFills: number };
+  stats: {
+    creates: number;
+    modifies: number;
+    cancels: number;
+    rejects: number;
+    errors: number;
+    fills: number;
+    takes: number;
+    takeFills: number;
+    // Requests refused for the exchange's rate limit, and how many of those paused every book.
+    rateLimited?: number;
+    rateLimitPauses?: number;
+  };
   events: QuoterEvent[];
   warnings: string[];
   taking: QuoterTakeView | null;
@@ -508,4 +520,6 @@ export interface QuoterDeskStatus {
   warnings: string[];
   totals: QuoterTotals[];
   trades: QuoterTradeSummary;
+  // The request pacer every book shares. Older quoters don't send it.
+  rateLimit?: { perSec: number; pausedForMs: number; lastAt: string | null };
 }

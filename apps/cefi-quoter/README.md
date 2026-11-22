@@ -125,6 +125,8 @@ The exchange limits order requests per account, so every book shares one budget 
 
 If the exchange rejects a request for its rate limit anyway ("Rate limit exceeded" over FIX, a 429 over REST), every book stops sending for a second, and its state reads "rate limited". Resting quotes stay where they are, since pulling them would take requests the limit doesn't have. Another rate-limit reject within 30s of the last pause doubles it, up to 30s. Rejects for requests already on the wire land during the pause and neither extend it nor fill the events: each pause is one event.
 
+Each pause counts as one hit on the book whose request set it off (`rateLimitPauses` in its stats), and every request refused counts in `rateLimited`. Both carry across restarts with the rest of the activity. `GET /api/status` adds them up in `totals` and gives the pacer's limit, any pause running and the last hit this run in `rateLimit`; the Quoter screen shows them in the Activity bar and each book's Activity card.
+
 ### Taking: getting unstuck
 
 Resting quotes alone can jam a book. A move fills one side up to the max position change, that side stops quoting, and the position only comes back when someone trades against the other side's quotes. So each book has two takers that cross the spread with an IOC (immediate or cancel) order when the exchange's book pays for it. Both are ported from the internal Python quoter ([quoter/taker.go](quoter/taker.go)):

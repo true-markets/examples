@@ -33,7 +33,7 @@ import { DataTable, type ColMeta } from "../table/DataTable.tsx";
 import { useUi } from "../ui-state.tsx";
 import { BulkParams } from "./BulkParams.tsx";
 import { Stack } from "./Balances.tsx";
-import { price as fmtPrice, qty as fmtQty, quoteUnit, usd as fmtUsd } from "../format.ts";
+import { ago, price as fmtPrice, qty as fmtQty, quoteUnit, usd as fmtUsd } from "../format.ts";
 import { Button, cx, Empty, inputClass, Modal, Panel, StatusBadge } from "./ui.tsx";
 
 // The management screen for a running cefi-quoter (apps/cefi-quoter). One quoter runs every book,
@@ -980,6 +980,13 @@ function ActivityCard({ s }: { s: QuoterStatus }) {
       <Row label="Modify share" title="Of the requests that changed a resting order, how many were modifies rather than cancels">
         {st.modifies + st.cancels ? `${Math.round((100 * st.modifies) / (st.modifies + st.cancels))}%` : "—"}
       </Row>
+      <Row
+        label="Rate limit hits"
+        title="Times this book's request hit the exchange's rate limit and paused every book, and how many of its requests were refused for it"
+      >
+        <span className={st.rateLimitPauses ? "text-sell" : ""}>{st.rateLimitPauses ?? 0}</span>
+        <span className="text-faint"> · {st.rateLimited ?? 0} refused</span>
+      </Row>
     </Card>
   );
 }
@@ -1528,7 +1535,43 @@ function ActivityBar({ d, open, onToggle }: { d: QuoterDeskStatus; open: boolean
           </Fragment>
         );
       })}
+      <RateLimitItem d={d} />
     </SummaryBar>
+  );
+}
+
+// The times the quoter hit the exchange's rate limit (each one paused every book), the requests
+// refused, and the pacer's own limit.
+function RateLimitItem({ d }: { d: QuoterDeskStatus }) {
+  const hits = d.totals.reduce((n, x) => n + (x.stats.rateLimitPauses ?? 0), 0);
+  const refused = d.totals.reduce((n, x) => n + (x.stats.rateLimited ?? 0), 0);
+  const rl = d.rateLimit;
+  if (!rl && !hits) return null;
+  const paused = rl?.pausedForMs ?? 0;
+  return (
+    <span
+      className={barItem}
+      title={
+        "Times the exchange rejected requests for its rate limit. Each one pauses every book's sending for 1s, doubling up to 30s while it keeps happening." +
+        (rl?.perSec ? ` The quoter itself sends at most ${rl.perSec} requests a second (ORDER_RATE_LIMIT).` : "")
+      }
+    >
+      <span className={barLabel}>Rate limit</span>
+      {paused > 0 && <span className="text-accent">paused {(paused / 1000).toFixed(1)}s ·</span>}
+      {hits ? (
+        <>
+          <span className="text-sell">
+            hit {hits} {hits === 1 ? "time" : "times"}
+          </span>
+          <span className="text-faint">
+            · {refused} refused{rl?.lastAt ? ` · last ${ago(Date.parse(rl.lastAt))}` : ""}
+          </span>
+        </>
+      ) : (
+        <span className="text-faint">not hit</span>
+      )}
+      {rl?.perSec ? <span className="text-faint">· {rl.perSec}/s</span> : null}
+    </span>
   );
 }
 

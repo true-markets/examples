@@ -117,10 +117,13 @@ type Stats struct {
 	Modifies int `json:"modifies"`
 	Cancels  int `json:"cancels"`
 	Rejects  int `json:"rejects"`
-	// RateLimited is requests refused for the exchange's rate limit (counted in Rejects or Errors too).
-	RateLimited int `json:"rateLimited"`
-	Errors      int `json:"errors"`
-	Fills       int `json:"fills"`
+	// RateLimited is requests refused for the exchange's rate limit (counted in Rejects or Errors
+	// too). RateLimitPauses is how many of those started a pause of every book: the times the
+	// quoter hit the limit, counted on the book whose request hit it.
+	RateLimited     int `json:"rateLimited"`
+	RateLimitPauses int `json:"rateLimitPauses"`
+	Errors          int `json:"errors"`
+	Fills           int `json:"fills"`
 	// Takes is IOC orders sent to cross the spread; TakeFills is how many of them traded.
 	Takes     int `json:"takes"`
 	TakeFills int `json:"takeFills"`
@@ -275,6 +278,7 @@ func (e *Engine) OnCancelReject(clOrdID, _ string, responseTo, text string) {
 func (e *Engine) rateLimitedLocked(text string) {
 	e.stats.RateLimited++
 	if d := e.pacer.Limited(); d > 0 {
+		e.stats.RateLimitPauses++
 		e.eventLocked("warn", fmt.Sprintf("rate limited by the exchange (%s); every book pauses sending for %s", text, d))
 	}
 }

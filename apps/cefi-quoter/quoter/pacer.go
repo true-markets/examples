@@ -29,7 +29,29 @@ type Pacer struct {
 	filled      time.Time
 	pausedUntil time.Time
 	pause       time.Duration
+	lastLimited time.Time
 	now         func() time.Time
+}
+
+// RateLimitStatus is the pacer, for the management API.
+type RateLimitStatus struct {
+	PerSec      int        `json:"perSec"` // 0: no limit of our own
+	PausedForMs int64      `json:"pausedForMs"`
+	LastAt      *time.Time `json:"lastAt"` // the last rate-limit reject this run
+}
+
+func (p *Pacer) Status() RateLimitStatus {
+	if p == nil {
+		return RateLimitStatus{}
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s := RateLimitStatus{PerSec: int(p.rate), PausedForMs: max(0, p.pausedUntil.Sub(p.now()).Milliseconds())}
+	if !p.lastLimited.IsZero() {
+		t := p.lastLimited
+		s.LastAt = &t
+	}
+	return s
 }
 
 const (
@@ -82,6 +104,7 @@ func (p *Pacer) Limited() time.Duration {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.now()
+	p.lastLimited = now
 	if now.Before(p.pausedUntil) {
 		return 0
 	}

@@ -725,6 +725,8 @@ type DeskStatus struct {
 	Totals []Totals `json:"totals"`
 	// Trades rolls up every fill this run: edge at fill and mark-outs.
 	Trades TradeSummary `json:"trades"`
+	// RateLimit is the pacer shared by every book; the counts are in each book's Stats.
+	RateLimit RateLimitStatus `json:"rateLimit"`
 }
 
 // Totals is every book on one quote currency, added up.
@@ -759,6 +761,7 @@ func (d *Desk) Status() DeskStatus {
 		s.Connections[ConnOrders] = &ConnState{Up: up, Reason: reason}
 	}
 	s.Balances = d.ledger.Snapshot(d.names)
+	s.RateLimit = d.pacer.Status()
 	// Value each asset in the quote currency: the quote is 1, a base asset is priced by any book's
 	// reference mid.
 	prices := map[string]decimal.Decimal{}
@@ -824,6 +827,8 @@ func totals(books []Summary) []Totals {
 		t.Stats.Fills += st.Fills
 		t.Stats.Takes += st.Takes
 		t.Stats.TakeFills += st.TakeFills
+		t.Stats.RateLimited += st.RateLimited
+		t.Stats.RateLimitPauses += st.RateLimitPauses
 	}
 	out := []Totals{}
 	for _, q := range order {

@@ -165,8 +165,15 @@ func TestRateLimitRejectPausesEveryBook(t *testing.T) {
 			n++
 		}
 	}
-	if n != 1 || btc.Status().Stats.RateLimited != 5 {
-		t.Fatalf("%d pause events, %d counted", n, btc.Status().Stats.RateLimited)
+	if st := btc.Status().Stats; n != 1 || st.RateLimited != 5 || st.RateLimitPauses != 1 {
+		t.Fatalf("%d pause events, %d refused, %d pauses", n, st.RateLimited, st.RateLimitPauses)
+	}
+	ds := desk.Status()
+	if tot := ds.Totals[0].Stats; tot.RateLimited != 5 || tot.RateLimitPauses != 1 {
+		t.Fatalf("totals %+v", tot)
+	}
+	if ds.RateLimit.PausedForMs <= 0 || ds.RateLimit.LastAt == nil {
+		t.Fatalf("desk rate limit %+v", ds.RateLimit)
 	}
 	if fx.resting("") != 12 {
 		t.Fatal("pulled quotes while rate limited")
