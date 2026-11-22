@@ -802,6 +802,29 @@ function PositionCard({ s }: { s: QuoterStatus }) {
   );
 }
 
+// How much of a budget the book's orders hold: green, yellow from 75%, red above 90%. Near the
+// top, the next order on that side may not fit.
+export function budgetTone(pct: number): "ok" | "warn" | "high" {
+  return pct > 90 ? "high" : pct >= 75 ? "warn" : "ok";
+}
+
+function BudgetUse({ held, budget }: { held: string; budget: string }) {
+  const h = Number(held);
+  const b = Number(budget);
+  if (!(b > 0)) return <span className="ml-1 text-faint">—</span>;
+  const pct = (h / b) * 100;
+  const tone = budgetTone(pct);
+  const cls = { ok: "bg-buy-soft text-buy", warn: "bg-accent-soft text-accent", high: "bg-sell-soft text-sell" }[tone];
+  return (
+    <span
+      className={cx("ml-1 inline-block min-w-11 rounded px-1 text-center text-[11px] font-medium", cls)}
+      title={tone === "ok" ? "of the budget in use" : tone === "warn" ? "75% or more in use" : "over 90% in use: new orders on this side may not fit"}
+    >
+      {pct.toFixed(0)}%
+    </span>
+  );
+}
+
 function BalancesCard({ s }: { s: QuoterStatus }) {
   const b = s.balances;
   const base = s.market.baseSymbol;
@@ -812,10 +835,10 @@ function BalancesCard({ s }: { s: QuoterStatus }) {
         label={`${quote} held / budget`}
         title="What this book's bids hold now, out of what they may hold: what they hold plus the shared free balance, capped by maxQuoteAlloc"
       >
-        {fmtQty(b.heldQuote, 2)} / {fmtQty(b.budgetQuote, 2)}
+        {fmtQty(b.heldQuote, 2)} / {fmtQty(b.budgetQuote, 2)} <BudgetUse held={b.heldQuote} budget={b.budgetQuote} />
       </Row>
       <Row label={`${base} held / budget`} title="What the asks hold now, out of what they may hold">
-        {fmtQty(b.heldBase)} / {fmtQty(b.budgetBase)}
+        {fmtQty(b.heldBase)} / {fmtQty(b.budgetBase)} <BudgetUse held={b.heldBase} budget={b.budgetBase} />
       </Row>
       <Row label="Free (shared)" title="Free in the ledger every book draws on">
         {fmtQty(b.freeQuote, 2)} {quote} · {fmtQty(b.freeBase)} {base}

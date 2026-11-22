@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { convertSize, describeReference, validate } from "./Quoter.tsx";
+import { budgetTone, convertSize, describeReference, validate } from "./Quoter.tsx";
 
 describe("quoter parameter form", () => {
   const levels = { key: "levels", label: "Levels", type: "integer" as const, help: "", min: 1, max: 10 };
@@ -42,5 +42,11 @@ describe("on/off settings", () => {
     expect(validate(spec, "true")).toBeUndefined();
     expect(validate(spec, "false")).toBeUndefined();
     expect(validate(spec, "yes")).toBe("on or off");
+  });
+});
+
+describe("budget use", () => {
+  it("is green below 75%, yellow from 75% to 90%, red above 90%", () => {
+    expect([0, 74.9, 75, 90, 90.1, 100].map(budgetTone)).toEqual(["ok", "ok", "warn", "warn", "high", "high"]);
   });
 });
