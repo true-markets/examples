@@ -192,10 +192,10 @@ interface TapeRow {
   price: number;
   qty: number;
   valueUsd: number;
-  mine: boolean;
   earlier: boolean;
-  // What the last column says: YOU, EARLIER, or the aggressor's side.
-  aggr: string;
+  // The side you were on, when the print matches one of your fills ("" when it's not yours; BOTH
+  // when both orders in the match were yours).
+  you: "" | "BUY" | "SELL" | "BOTH";
 }
 
 const tcol = createColumnHelper<TapeRow>();
@@ -207,15 +207,23 @@ function Tape({ scope }: { scope: "book" | "all" }) {
   const [filters, setFilters] = useState<ColumnFiltersState>([]);
   const trades = all ? store.allTrades() : symbol ? (store.tape.get(symbol) ?? []) : [];
   // A print is yours when one of your fills has the same book, price and size within a few seconds
-  // (live trades carry no exchange timestamp, so they are stamped on arrival).
-  const yours = (t: TapeTrade) =>
-    t.source === "live" &&
-    store.fills.some(
-      (f) => f.symbol === t.symbol && Number(f.price) === Number(t.price) && Number(f.qty) === Number(t.qty) && Math.abs(nsToMs(f.timestampNs) - nsToMs(t.timestampNs)) < 5_000,
+  // (live trades carry no exchange timestamp, so they are stamped on arrival). Your side is that
+  // fill's side: the opposite of the aggressor when your resting order was hit.
+  const yours = (t: TapeTrade): TapeRow["you"] => {
+    if (t.source !== "live") return "";
+    const sides = new Set(
+      store.fills
+        .filter(
+          (f) =>
+            f.symbol === t.symbol && Number(f.price) === Number(t.price) && Number(f.qty) === Number(t.qty) && Math.abs(nsToMs(f.timestampNs) - nsToMs(t.timestampNs)) < 5_000,
+        )
+        .map((f) => f.side),
     );
+    return sides.size === 2 ? "BOTH" : ((([...sides][0] as "BUY" | "SELL" | undefined) ?? "") as TapeRow["you"]);
+  };
   // Rebuilt every render: the store updates its lists in place and re-renders through useMarket.
   const rows: TapeRow[] = trades.map((t) => {
-    const mine = yours(t);
+    const you = yours(t);
     const earlier = t.source === "last";
     const p = Number(t.price);
     const q = Number(t.qty);
@@ -228,9 +236,8 @@ function Tape({ scope }: { scope: "book" | "all" }) {
       price: p,
       qty: q,
       valueUsd: p * q,
-      mine,
       earlier,
-      aggr: mine ? "YOU" : earlier ? "EARLIER" : t.side,
+      you,
     };
   });
 
@@ -276,14 +283,25 @@ function Tape({ scope }: { scope: "book" | "all" }) {
           meta: fm({ label: "Value", align: "right", title: "Price × size, in USD", filter: { kind: "range", unit: "$" } }),
           cell: (c) => <span className="num text-muted">{usd(c.getValue() as number)}</span>,
         }),
-        tcol.accessor("aggr", {
+        tcol.accessor("side", {
           id: "aggr",
           header: "Aggr",
-          size: 72,
-          meta: fm({ label: "Aggressor", align: "right", title: "The aggressor's side; YOU for a print that matches one of your fills", filter: { kind: "multi" } }),
+          size: 64,
+          meta: fm({ label: "Aggressor", align: "right", title: "The aggressor's side: BUY lifted an offer, SELL hit a bid", filter: { kind: "multi" } }),
           cell: (c) => {
             const r = c.row.original;
-            return <span className={cx("text-[10px] font-semibold", r.earlier ? "text-faint" : r.side === "BUY" ? "text-buy" : "text-sell")}>{r.aggr}</span>;
+            return <span className={cx("text-[10px] font-semibold", r.earlier ? "text-faint" : r.side === "BUY" ? "text-buy" : "text-sell")}>{r.side}</span>;
+          },
+        }),
+        tcol.accessor("you", {
+          id: "you",
+          header: "You",
+          size: 56,
+          meta: fm({ label: "You", align: "right", title: "The side you were on, when the print matches one of your fills", filter: { kind: "multi" } }),
+          cell: (c) => {
+            const v = c.getValue() as TapeRow["you"];
+            if (!v) return null;
+            return <span className={cx("text-[10px] font-semibold", v === "BUY" ? "text-buy" : v === "SELL" ? "text-sell" : "text-accent")}>{v}</span>;
           },
         }),
       ] as ColumnDef<TapeRow, unknown>[],
@@ -296,7 +314,7 @@ function Tape({ scope }: { scope: "book" | "all" }) {
       for (const r of rows) m.set(f(r), (m.get(f(r)) ?? 0) + 1);
       return [...m].map(([value, count]) => ({ value, count })).sort((a, b) => a.value.localeCompare(b.value));
     };
-    return { symbol: count((r) => r.symbol), aggr: count((r) => r.aggr) };
+    return { symbol: count((r) => r.symbol), aggr: count((r) => r.side), you: count((r) => r.you) };
     // rows is rebuilt every render; its length and newest id stand for its contents.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows.length, rows[0]?.id]);
@@ -312,7 +330,7 @@ function Tape({ scope }: { scope: "book" | "all" }) {
       filters={filters}
       onFiltersChange={setFilters}
       facets={facets}
-      rowClassName={(r) => cx(r.mine && "bg-accent-soft", r.earlier && "opacity-60")}
+      rowClassName={(r) => cx(r.you && "bg-accent-soft", r.earlier && "opacity-60")}
       onRowClick={all ? (r) => setSymbol(r.symbol) : undefined}
       empty={
         trades.length
