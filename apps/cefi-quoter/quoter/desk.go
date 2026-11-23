@@ -46,12 +46,14 @@ type DeskConfig struct {
 	ClientID    string
 	Transport   string // rest or fix
 	IDPrefix    string
-	// OrderRate is the most order requests a second, across every book (see Pacer). 0 for no
-	// limit of our own; a rate-limit reject still pauses sending.
-	OrderRate int
-	Defaults  Params // for books added without their own settings
-	Catalog   []Listing
-	Venue     Venue
+	// OrderRate and OrderRatePerMin are the most new orders and modifies in any second and any
+	// minute, across every book (see Pacer). 0 for no limit of our own; a rate-limit reject still
+	// pauses sending.
+	OrderRate       int
+	OrderRatePerMin int
+	Defaults        Params // for books added without their own settings
+	Catalog         []Listing
+	Venue           Venue
 	// NewTransport makes the order transport for one book.
 	NewTransport func(Market) Transport
 	// CheckReference fails if a reference source doesn't exist. Optional.
@@ -114,7 +116,7 @@ func NewDesk(cfg DeskConfig) *Desk {
 	d := &Desk{
 		cfg:          cfg,
 		ledger:       NewLedger(),
-		pacer:        NewPacer(cfg.OrderRate),
+		pacer:        NewPacer(cfg.OrderRate, cfg.OrderRatePerMin),
 		journal:      NewJournal(),
 		log:          cfg.Log,
 		catalog:      map[string]Listing{},

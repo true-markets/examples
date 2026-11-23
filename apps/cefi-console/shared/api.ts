@@ -521,6 +521,6 @@ export interface QuoterDeskStatus {
   totals: QuoterTotals[];
   trades: QuoterTradeSummary;
   // The request pacer every book shares. Older quoters don't send it.
-  // used: requests in the last second; peak: the most in any second over the last minute.
-  rateLimit?: { perSec: number; used?: number; peak?: number; pausedForMs: number; lastAt: string | null };
+  // used / usedMin: new orders and modifies in the last second / minute; peak: the most in any second over the last minute.
+  rateLimit?: { perSec: number; perMin?: number; used?: number; usedMin?: number; peak?: number; pausedForMs: number; lastAt: string | null };
 }

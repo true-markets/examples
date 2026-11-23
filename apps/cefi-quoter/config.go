@@ -26,9 +26,10 @@ type Config struct {
 	AutoStart      bool   // start every saved book immediately instead of waiting for "start"
 	IDPrefix       string
 
-	Transport string // rest or fix
-	OrderRate int    // most order requests a second, across every book
-	FIX       FIXConfig
+	Transport       string // rest or fix
+	OrderRate       int    // most new orders and modifies in any second, across every book
+	OrderRatePerMin int    // and in any minute
+	FIX             FIXConfig
 
 	AdminAddr  string
 	AdminToken string
@@ -94,18 +95,19 @@ func loadConfig() (Config, error) {
 	}
 
 	c := Config{
-		KeyPath:        get("TM_API_KEY_PATH", ".secrets"),
-		Environment:    get("TM_ENV", "production"),
-		ClientID:       get("TM_CLIENT_ID", ""),
-		OrganizationID: get("TM_ORGANIZATION_ID", ""),
-		BooksFile:      get("QUOTER_BOOKS_FILE", "books.json"),
-		AutoStart:      getBool("QUOTER_AUTOSTART", false),
-		IDPrefix:       get("QUOTER_ID_PREFIX", "cq"),
-		Transport:      get("ORDER_TRANSPORT", "rest"),
-		OrderRate:      getInt("ORDER_RATE_LIMIT", 20),
-		AdminAddr:      get("ADMIN_ADDR", "127.0.0.1:4860"),
-		AdminToken:     get("ADMIN_TOKEN", ""),
-		LogLevel:       get("LOG_LEVEL", "info"),
+		KeyPath:         get("TM_API_KEY_PATH", ".secrets"),
+		Environment:     get("TM_ENV", "production"),
+		ClientID:        get("TM_CLIENT_ID", ""),
+		OrganizationID:  get("TM_ORGANIZATION_ID", ""),
+		BooksFile:       get("QUOTER_BOOKS_FILE", "books.json"),
+		AutoStart:       getBool("QUOTER_AUTOSTART", false),
+		IDPrefix:        get("QUOTER_ID_PREFIX", "cq"),
+		Transport:       get("ORDER_TRANSPORT", "rest"),
+		OrderRate:       getInt("ORDER_RATE_LIMIT", 20),
+		OrderRatePerMin: getInt("ORDER_RATE_LIMIT_PER_MIN", 1800),
+		AdminAddr:       get("ADMIN_ADDR", "127.0.0.1:4860"),
+		AdminToken:      get("ADMIN_TOKEN", ""),
+		LogLevel:        get("LOG_LEVEL", "info"),
 		Params: quoter.Params{
 			SizeUnit:            get("SIZE_UNIT", quoter.SizeInQuote),
 			SpreadBps:           getFloat("SPREAD_BPS", 10),

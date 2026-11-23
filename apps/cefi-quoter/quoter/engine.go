@@ -565,8 +565,8 @@ func (e *Engine) execute(ctx context.Context, steps []Step) {
 		}
 		// Out of requests for now: the rest waits for the next cycle, planned again with fresh
 		// prices. Plan's order (cancels, then modifies that free funds, then the rest) means what
-		// does go out is safe on its own.
-		if !e.pacer.Take() {
+		// does go out is safe on its own. Cancels always go: the exchange doesn't rate limit them.
+		if s.Kind != Cancel && !e.pacer.Take() {
 			return
 		}
 		asset, alloc := e.market.QuoteAssetID, p.MaxQuoteAlloc
@@ -703,14 +703,7 @@ func (e *Engine) cancelOrphans(ctx context.Context) {
 	orphans := e.orphans
 	e.orphans = nil
 	e.mu.Unlock()
-	for i, id := range orphans {
-		if !e.pacer.Take() {
-			// The rest wait for the next cycle, like any other request over the limit.
-			e.mu.Lock()
-			e.orphans = append(e.orphans, orphans[i:]...)
-			e.mu.Unlock()
-			return
-		}
+	for _, id := range orphans { // cancels: not rate limited
 		e.log.Warn("canceling an order of ours we weren't tracking", "external_id", id)
 		_ = e.tx.Cancel(ctx, id, e.book.NewID(), id)
 	}

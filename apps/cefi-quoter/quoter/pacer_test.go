@@ -29,7 +29,7 @@ func takeN(p *Pacer, n int) int {
 
 // No one-second window, however it lines up, ever holds more than the limit.
 func TestPacerWindow(t *testing.T) {
-	p := NewPacer(10)
+	p := NewPacer(10, 0)
 	now := fakeClock(p)
 	start := *now
 	var sent []time.Time
@@ -55,13 +55,40 @@ func TestPacerWindow(t *testing.T) {
 	}
 }
 
+// The minute limit holds across seconds: with room for 10 a second and 25 a minute, the first
+// three seconds send 10, 10 and 5, then nothing until a minute after the first.
+func TestPacerMinuteWindow(t *testing.T) {
+	p := NewPacer(10, 25)
+	now := fakeClock(p)
+	start := *now
+	got := []int{}
+	for range 3 {
+		got = append(got, takeN(p, 50))
+		*now = now.Add(time.Second)
+	}
+	if got[0] != 10 || got[1] != 10 || got[2] != 5 {
+		t.Fatalf("per second: %v", got)
+	}
+	*now = start.Add(59 * time.Second)
+	if n := takeN(p, 50); n != 0 {
+		t.Fatalf("%d sent before the minute ran out", n)
+	}
+	*now = start.Add(60 * time.Second) // the first second's 10 age out
+	if n := takeN(p, 50); n != 10 {
+		t.Fatalf("%d after the first second aged out", n)
+	}
+	if s := p.Status(); s.PerMin != 25 || s.UsedMin != 25 || s.Used != 10 {
+		t.Fatalf("%+v", s)
+	}
+}
+
 func TestPacerUsage(t *testing.T) {
-	p := NewPacer(0) // usage is counted with or without a limit
+	p := NewPacer(0, 0) // usage is counted with or without a limit
 	now := fakeClock(p)
 	takeN(p, 7)
 	*now = now.Add(500 * time.Millisecond)
 	takeN(p, 5)
-	if s := p.Status(); s.Used != 12 || s.Peak != 12 {
+	if s := p.Status(); s.Used != 12 || s.UsedMin != 12 || s.Peak != 12 {
 		t.Fatalf("%+v", s)
 	}
 	*now = now.Add(600 * time.Millisecond) // the first 7 are over a second old
@@ -75,7 +102,7 @@ func TestPacerUsage(t *testing.T) {
 }
 
 func TestPacerPausesOnRateLimitAndBacksOff(t *testing.T) {
-	p := NewPacer(0) // no window: only the pause
+	p := NewPacer(0, 0) // no window: only the pause
 	now := fakeClock(p)
 	if !p.Take() {
 		t.Fatal("unlimited pacer refused")
@@ -110,7 +137,7 @@ func TestPacerPausesOnRateLimitAndBacksOff(t *testing.T) {
 }
 
 func TestPacerAfterPauseKeepsTheLimit(t *testing.T) {
-	p := NewPacer(10)
+	p := NewPacer(10, 0)
 	now := fakeClock(p)
 	p.Limited()
 	if got := takeN(p, 50); got != 0 {
@@ -165,6 +192,15 @@ func TestBooksShareThePacer(t *testing.T) {
 		t.Fatalf("%d creates in the first 300ms, want the limit of 3", n)
 	}
 	waitFor(t, "three more the next second", func() bool { return fx.counts()["create"] >= 6 })
+
+	// The window is full, but cancels don't count: stopping pulls every quote at once.
+	for _, b := range books {
+		desk.Engine(b).SetEnabled(false)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if n := fx.resting(""); n != 0 {
+		t.Fatalf("%d quotes still resting 300ms after stopping", n)
+	}
 }
 
 // A rate-limit reject pauses every book, says so once, and leaves the resting quotes alone.

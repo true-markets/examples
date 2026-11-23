@@ -10,29 +10,55 @@ import (
 	"github.com/true-markets/examples/apps/cefi-quoter/tm"
 )
 
-// Pacer keeps every book's order requests (creates, modifies, cancels, takes) inside the
-// exchange's rate limit. The desk has one, because the limit is per account, not per book.
+// Pacer keeps every book's order requests inside the exchange's rate limits. The desk has one,
+// because the limits are per account, not per book.
 //
-// Two parts:
-//   - A rolling window: no more than limit requests in any one second, counted back from now. (A
-//     token bucket would average the limit but let a burst through on top of it, and the
-//     exchange counts the burst.) A book that finds the window full stops sending for this cycle
-//     and plans again on the next one, with fresh prices, rather than queueing requests that
-//     would be stale by the time they went out.
-//   - A pause: when the exchange rejects a request for its rate limit anyway, every book stops
-//     sending for a second. Another rate-limit reject within 30s of the last pause doubles it,
-//     up to 30s. Rejects from requests already on the wire land during the pause and don't
+// The exchange's order checks (celeritas trading/common/risk/order_rate_limiter.hpp) hold each
+// account to a number of orders per second and a number per minute. Each is a fixed window that
+// opens on the first request after the last one ran out. New orders and modifies count; cancels
+// never do and are never refused for the rate. A request the per-minute limit refuses doesn't count
+// toward it, so once the minute is spent everything is refused until that window ends, up to a
+// minute later.
+//
+// So the pacer:
+//   - Counts creates, modifies and takes, and lets cancels through untouched (Take is only called
+//     for the counted kinds).
+//   - Holds them to perSec in any one second and perMin in any one minute, counted back from now.
+//     A rolling window never holds more than a fixed window of the same length can, so staying
+//     under it keeps the exchange's count under too, however its windows line up. A book that
+//     finds a window full stops sending for this cycle and plans again on the next one, with fresh
+//     prices, rather than queueing requests that would be stale by the time they went out.
+//   - Pauses on a rate-limit reject anyway: every book stops sending new orders and modifies for
+//     a second, doubling up to 30s while the rejects continue (the exchange's minute can take that
+//     long to run out). Rejects from requests already on the wire land during the pause and don't
 //     extend it.
 type Pacer struct {
 	mu          sync.Mutex
-	limit       int         // requests in any one second; 0 for no window
-	sent        []time.Time // every request in the last second, oldest first
-	peaks       [60]peak    // the busiest second-long stretch ending in each of the last 60 seconds
+	sec, min    window
+	peaks       [60]peak // the busiest second-long stretch ending in each of the last 60 seconds
 	pausedUntil time.Time
 	pause       time.Duration
 	lastLimited time.Time
 	now         func() time.Time
 }
+
+// window is the requests sent in the last span, oldest first, and how many it may hold (0 for no
+// limit: still counted, for the usage report).
+type window struct {
+	limit int
+	span  time.Duration
+	sent  []time.Time
+}
+
+func (w *window) trim(now time.Time) {
+	i := 0
+	for i < len(w.sent) && now.Sub(w.sent[i]) >= w.span {
+		i++
+	}
+	w.sent = w.sent[i:]
+}
+
+func (w *window) full() bool { return w.limit > 0 && len(w.sent) >= w.limit }
 
 type peak struct {
 	sec int64 // unix second
@@ -42,9 +68,11 @@ type peak struct {
 // RateLimitStatus is the pacer, for the management API.
 type RateLimitStatus struct {
 	PerSec int `json:"perSec"` // 0: no limit of our own
-	// Used is the requests sent in the last second; Peak is the most in any second over the last
-	// minute. Both are counted the way the limit is.
+	PerMin int `json:"perMin"` // 0: no limit of our own
+	// Used is the orders and modifies sent in the last second, UsedMin in the last minute; Peak is
+	// the most in any second over the last minute. Cancels aren't counted, as the exchange doesn't.
 	Used        int        `json:"used"`
+	UsedMin     int        `json:"usedMin"`
 	Peak        int        `json:"peak"`
 	PausedForMs int64      `json:"pausedForMs"`
 	LastAt      *time.Time `json:"lastAt"` // the last rate-limit reject this run
@@ -57,8 +85,12 @@ func (p *Pacer) Status() RateLimitStatus {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.now()
-	p.trimLocked(now)
-	s := RateLimitStatus{PerSec: p.limit, Used: len(p.sent), PausedForMs: max(0, p.pausedUntil.Sub(now).Milliseconds())}
+	p.sec.trim(now)
+	p.min.trim(now)
+	s := RateLimitStatus{
+		PerSec: p.sec.limit, PerMin: p.min.limit, Used: len(p.sec.sent), UsedMin: len(p.min.sent),
+		PausedForMs: max(0, p.pausedUntil.Sub(now).Milliseconds()),
+	}
 	for _, pk := range p.peaks {
 		if now.Unix()-pk.sec < 60 {
 			s.Peak = max(s.Peak, pk.n)
@@ -76,12 +108,18 @@ const (
 	pauseMax = 30 * time.Second
 )
 
-// NewPacer allows perSec requests a second. 0 or less leaves only the pause on rate-limit rejects.
-func NewPacer(perSec int) *Pacer {
-	return &Pacer{now: time.Now, limit: max(0, perSec)}
+// NewPacer allows perSec orders and modifies in any second and perMin in any minute. 0 turns that
+// limit off; with both off only the pause on rate-limit rejects is left.
+func NewPacer(perSec, perMin int) *Pacer {
+	return &Pacer{
+		now: time.Now,
+		sec: window{limit: max(0, perSec), span: time.Second},
+		min: window{limit: max(0, perMin), span: time.Minute},
+	}
 }
 
-// Take spends one request. False means don't send it now.
+// Take spends one new order, modify or take. False means don't send it now. Cancels don't call it:
+// the exchange neither counts nor refuses them.
 func (p *Pacer) Take() bool {
 	if p == nil {
 		return true
@@ -92,26 +130,19 @@ func (p *Pacer) Take() bool {
 	if now.Before(p.pausedUntil) {
 		return false
 	}
-	p.trimLocked(now)
-	if p.limit > 0 && len(p.sent) >= p.limit {
+	p.sec.trim(now)
+	p.min.trim(now)
+	if p.sec.full() || p.min.full() {
 		return false
 	}
-	p.sent = append(p.sent, now)
+	p.sec.sent = append(p.sec.sent, now)
+	p.min.sent = append(p.min.sent, now)
 	pk := &p.peaks[now.Unix()%60]
 	if pk.sec != now.Unix() {
 		*pk = peak{sec: now.Unix()}
 	}
-	pk.n = max(pk.n, len(p.sent))
+	pk.n = max(pk.n, len(p.sec.sent))
 	return true
-}
-
-// trimLocked drops requests a second or more old: they no longer count against the limit.
-func (p *Pacer) trimLocked(now time.Time) {
-	i := 0
-	for i < len(p.sent) && now.Sub(p.sent[i]) >= time.Second {
-		i++
-	}
-	p.sent = p.sent[i:]
 }
 
 // Limited records a rate-limit reject from the exchange. It returns the pause it started, or 0
