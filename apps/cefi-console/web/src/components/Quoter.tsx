@@ -1574,23 +1574,49 @@ function ActivityBar({ d, open, onToggle }: { d: QuoterDeskStatus; open: boolean
   );
 }
 
-// The times the quoter hit the exchange's rate limit (each one paused every book), the requests
-// refused, and the pacer's own limit.
+// Live use of the request budget (the last second, and the busiest second in the last minute,
+// against ORDER_RATE_LIMIT), then the times the quoter hit the exchange's rate limit (each one
+// paused every book) and the requests refused.
 function RateLimitItem({ d }: { d: QuoterDeskStatus }) {
   const hits = d.totals.reduce((n, x) => n + (x.stats.rateLimitPauses ?? 0), 0);
   const refused = d.totals.reduce((n, x) => n + (x.stats.rateLimited ?? 0), 0);
   const rl = d.rateLimit;
   if (!rl && !hits) return null;
   const paused = rl?.pausedForMs ?? 0;
+  const used = rl?.used;
+  const limit = rl?.perSec ?? 0;
+  const load = (n: number) => (!limit ? "" : n >= 0.9 * limit ? "text-sell" : n >= 0.7 * limit ? "text-accent" : "");
   return (
     <span
       className={barItem}
       title={
-        "Times the exchange rejected requests for its rate limit. Each one pauses every book's sending for 1s, doubling up to 30s while it keeps happening." +
-        (rl?.perSec ? ` The quoter itself sends at most ${rl.perSec} requests a second (ORDER_RATE_LIMIT).` : "")
+        (limit
+          ? `Order requests sent in the last second, against the quoter's own limit of ${limit} in any one second (ORDER_RATE_LIMIT), and the busiest second in the last minute. `
+          : "Order requests sent in the last second, and the busiest second in the last minute. ") +
+        "Hits are times the exchange rejected requests for its rate limit anyway; each one pauses every book's sending for 1s, doubling up to 30s while it keeps happening."
       }
     >
       <span className={barLabel}>Rate limit</span>
+      {used !== undefined && (
+        <>
+          <span className={load(used)}>
+            {used}
+            {limit ? `/${limit}` : ""}
+          </span>
+          <span className="text-faint">/s</span>
+          {limit > 0 && (
+            <span className="relative h-1.5 w-14 self-center overflow-hidden rounded-full bg-raised">
+              <span
+                className={cx("absolute inset-y-0 left-0 rounded-full", used >= 0.9 * limit ? "bg-sell" : used >= 0.7 * limit ? "bg-accent" : "bg-buy")}
+                style={{ width: `${Math.min(100, (100 * used) / limit)}%` }}
+              />
+            </span>
+          )}
+          <span className="text-faint">
+            · peak <span className={load(rl?.peak ?? 0)}>{rl?.peak ?? 0}</span> ·
+          </span>
+        </>
+      )}
       {paused > 0 && <span className="text-accent">paused {(paused / 1000).toFixed(1)}s ·</span>}
       {hits ? (
         <>
@@ -1604,7 +1630,7 @@ function RateLimitItem({ d }: { d: QuoterDeskStatus }) {
       ) : (
         <span className="text-faint">not hit</span>
       )}
-      {rl?.perSec ? <span className="text-faint">· {rl.perSec}/s</span> : null}
+      {used === undefined && limit ? <span className="text-faint">· {limit}/s</span> : null}
     </span>
   );
 }

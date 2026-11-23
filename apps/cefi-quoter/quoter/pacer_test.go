@@ -55,6 +55,25 @@ func TestPacerWindow(t *testing.T) {
 	}
 }
 
+func TestPacerUsage(t *testing.T) {
+	p := NewPacer(0) // usage is counted with or without a limit
+	now := fakeClock(p)
+	takeN(p, 7)
+	*now = now.Add(500 * time.Millisecond)
+	takeN(p, 5)
+	if s := p.Status(); s.Used != 12 || s.Peak != 12 {
+		t.Fatalf("%+v", s)
+	}
+	*now = now.Add(600 * time.Millisecond) // the first 7 are over a second old
+	if s := p.Status(); s.Used != 5 || s.Peak != 12 {
+		t.Fatalf("%+v", s)
+	}
+	*now = now.Add(time.Minute) // the peak ages out after a minute
+	if s := p.Status(); s.Used != 0 || s.Peak != 0 {
+		t.Fatalf("%+v", s)
+	}
+}
+
 func TestPacerPausesOnRateLimitAndBacksOff(t *testing.T) {
 	p := NewPacer(0) // no window: only the pause
 	now := fakeClock(p)

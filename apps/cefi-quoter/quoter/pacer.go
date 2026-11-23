@@ -26,16 +26,26 @@ import (
 type Pacer struct {
 	mu          sync.Mutex
 	limit       int         // requests in any one second; 0 for no window
-	sent        []time.Time // when the last limit requests went out, oldest first
+	sent        []time.Time // every request in the last second, oldest first
+	peaks       [60]peak    // the busiest second-long stretch ending in each of the last 60 seconds
 	pausedUntil time.Time
 	pause       time.Duration
 	lastLimited time.Time
 	now         func() time.Time
 }
 
+type peak struct {
+	sec int64 // unix second
+	n   int
+}
+
 // RateLimitStatus is the pacer, for the management API.
 type RateLimitStatus struct {
-	PerSec      int        `json:"perSec"` // 0: no limit of our own
+	PerSec int `json:"perSec"` // 0: no limit of our own
+	// Used is the requests sent in the last second; Peak is the most in any second over the last
+	// minute. Both are counted the way the limit is.
+	Used        int        `json:"used"`
+	Peak        int        `json:"peak"`
 	PausedForMs int64      `json:"pausedForMs"`
 	LastAt      *time.Time `json:"lastAt"` // the last rate-limit reject this run
 }
@@ -46,7 +56,14 @@ func (p *Pacer) Status() RateLimitStatus {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	s := RateLimitStatus{PerSec: p.limit, PausedForMs: max(0, p.pausedUntil.Sub(p.now()).Milliseconds())}
+	now := p.now()
+	p.trimLocked(now)
+	s := RateLimitStatus{PerSec: p.limit, Used: len(p.sent), PausedForMs: max(0, p.pausedUntil.Sub(now).Milliseconds())}
+	for _, pk := range p.peaks {
+		if now.Unix()-pk.sec < 60 {
+			s.Peak = max(s.Peak, pk.n)
+		}
+	}
 	if !p.lastLimited.IsZero() {
 		t := p.lastLimited
 		s.LastAt = &t
@@ -75,17 +92,26 @@ func (p *Pacer) Take() bool {
 	if now.Before(p.pausedUntil) {
 		return false
 	}
-	if p.limit == 0 {
-		return true
-	}
-	if len(p.sent) == p.limit {
-		if now.Sub(p.sent[0]) < time.Second {
-			return false
-		}
-		p.sent = p.sent[1:]
+	p.trimLocked(now)
+	if p.limit > 0 && len(p.sent) >= p.limit {
+		return false
 	}
 	p.sent = append(p.sent, now)
+	pk := &p.peaks[now.Unix()%60]
+	if pk.sec != now.Unix() {
+		*pk = peak{sec: now.Unix()}
+	}
+	pk.n = max(pk.n, len(p.sent))
 	return true
+}
+
+// trimLocked drops requests a second or more old: they no longer count against the limit.
+func (p *Pacer) trimLocked(now time.Time) {
+	i := 0
+	for i < len(p.sent) && now.Sub(p.sent[i]) >= time.Second {
+		i++
+	}
+	p.sent = p.sent[i:]
 }
 
 // Limited records a rate-limit reject from the exchange. It returns the pause it started, or 0
