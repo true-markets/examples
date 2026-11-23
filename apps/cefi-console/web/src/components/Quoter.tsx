@@ -116,8 +116,8 @@ export function QuoterScreen() {
             <Divider />
             <Pane id="quoter-book" defaultSize="72" minSize="40">
               <div className={cx(pane, "flex flex-col gap-2")}>
-                <AllBooksBar d={desk} open={shownOpen === "edge"} onToggle={(o) => setOpen(o ? "edge" : "none")} />
-                <ActivityBar d={desk} open={shownOpen === "params"} onToggle={(o) => setOpen(o ? "params" : "none")} />
+                <AllBooksBar d={desk} open={shownOpen === "params"} onToggle={(o) => setOpen(o ? "params" : "none")} />
+                <ActivityBar d={desk} open={shownOpen === "edge"} onToggle={(o) => setOpen(o ? "edge" : "none")} />
                 {shownOpen === "edge" && (
                   <div className="min-h-0 flex-1">
                     <TradesView />
@@ -1469,9 +1469,9 @@ function AllBooksBar({ d, open, onToggle }: { d: QuoterDeskStatus; open: boolean
         <OpenButton
           open={open}
           onToggle={onToggle}
-          icon={<ChartColumn size={12} />}
-          label={`Trades${t.trades ? ` (${t.trades})` : ""}`}
-          title={open ? "Close trades" : "Edge retention by book, and every trade across the books"}
+          icon={<SlidersHorizontal size={12} />}
+          label="Parameters"
+          title={open ? "Close the all-books parameter editor" : "Edit parameters across every book"}
         />
       }
     >
@@ -1534,9 +1534,9 @@ function ActivityBar({ d, open, onToggle }: { d: QuoterDeskStatus; open: boolean
           <OpenButton
             open={open}
             onToggle={onToggle}
-            icon={<SlidersHorizontal size={12} />}
-            label="Parameters"
-            title={open ? "Close the all-books parameter editor" : "Edit parameters across every book"}
+            icon={<ChartColumn size={12} />}
+            label={`Trades${d.trades.trades ? ` (${d.trades.trades})` : ""}`}
+            title={open ? "Close trades" : "Edge retention by book, and every trade across the books"}
           />
         </>
       }
