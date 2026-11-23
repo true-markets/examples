@@ -10,49 +10,31 @@ It runs out of the box against a built-in simulator, so you can see it working b
 
 ## What's on the screen
 
+One quoter runs every book, all on one shared view of the account's balances. The quoter bar along the top shows its mode, its connections and, on the right, the rate limit: new orders and modifies sent in the last second and the last minute against `ORDER_RATE_LIMIT` and `ORDER_RATE_LIMIT_PER_MIN` (each with a meter that turns amber at 70% and red at 90%), the busiest second in the last minute, and how many times the quoter hit the exchange's limit anyway, with the requests refused and when it was last hit. Books and shared balances run the full height on the left and always show. On the right are the All books and Activity bars, then the book you pick, or the breakdown one of the bars opened in its place; picking a book closes the breakdown. The instrument is shared with the trading view: pick a book here and the trading view shows it, and an instrument picked there shows here when the quoter has a book for it. The quoter's stop buttons sit in the header on both screens, to the right of the cancel buttons: **Stop and pull <base> quotes** for the selected book and **Stop and pull all quotes** for every book. Stopping keeps the quotes pulled, where a plain cancel would see the quoter put them back on its next cycle. So while the quoter is quoting a book, the cancel buttons leave its orders there alone: they count and cancel only your other orders (told apart by the quoter's client order id prefix, `cq` by default), and they hide when the quoter's quotes are all that's resting. Once a book is stopped, anything it left behind counts as an ordinary order again.
+
 | Area | What it shows | What you can do |
 | --- | --- | --- |
-| **Markets** | A tile per instrument: last, best bid/ask, 24h volume, how many of your orders are open there | Click to focus that symbol |
-| **Orders** | Every order from the last 24 hours, updated live from DROPCOPY. Sorted by last update, newest first, so anything just modified, filled or canceled floats up and flashes. Quick filters: Open / Filled / Canceled tabs, a multi-select of symbols, and search across order id, external id and symbol. Every column also has its own filter (see **Tables** below) | Modify price/qty, cancel one, cancel a selection, cancel all in the selected symbols |
-| **Book** | L2 depth for the focused symbol, 10/20/50 levels, with **your resting orders marked on their levels**: your size, how many orders, and what share of the level is yours. A footer counts any of your orders priced deeper than shown | Click a level to load its price into the ticket; cancel your orders at a level |
-| **Ticket** | Size in USD (the default) or as a quantity, with a line saying exactly what will be sent. CeFi: limit or market, GTC or IOC, post-only (ALO); a USD market order uses the exchange's `QUOTE_QTY` flag, a USD limit order is converted at the limit price and rounded down. DeFi: a market swap on the asset's DeFi listing, with a quote to confirm first | Place an order (in live mode, CeFi asks for a second click; DeFi asks you to confirm the quote) |
-| **Fills / Tape** | Your fills (REST history plus live DROPCOPY trades), and the public trade tape with your prints highlighted | Click a fill to focus its order |
-| **Balances** | Each asset split between your wallet and CeFi: free in wallet, allocated, CeFi balance, held by orders, tradable. Per wallet listing (per chain) | Allocate wallet funds to CeFi, release them back; watch each move go through its states under **Moves** |
-| **Header** | Connection health (heartbeat-backed), DEMO/UAT/LIVE badge | A light / dark / system theme switch (saved in this browser), and **Cancel all orders** (the exchange's own cancel-all) |
+| **Quoter bar** | LIVE / UAT / PAPER, the number of books, and the health of order entry (REST or FIX), the drop copy, market data and the reference | Start all (production asks first); **Help** hides the explanations |
+| **Books** | How many books are quoting and the orders they have resting, in the title bar; then every book with its state, orders, position and PnL, and how much of its bid and ask budgets are in use (colored as on the Budget card) | Pick one to see it; add a book from those the exchange offers, then choose its reference sources in an editor that previews them live |
+| **Shared balances** | Per asset, in USD with the quantity under it: **Balance** (your CeFi balance the quoter can use), **Trading** (held by the quoter's orders), **Unused** (left for new orders), and **Other orders** when orders the quoter didn't place hold some. Totals on top | Sort and filter by any column, as in the trading view's tables |
+| **All books** | Across every book: PnL (realized and open), volume, and edge at fill with its +30s and +300s mark-outs | **bps / $** shows edge, mark-outs, the spread and each quote's distance from the mid in bps or in dollars, across the screen (parameters stay in bps); **Parameters** opens the all-books editor in place of the selected book |
+| **Activity** | Across every book: requests, fills (with takes and rejects) and the maker share of fills. **Reset rejects** (shown once there's something to reset) starts every book's reject, error and rate-limit counts from zero | **Trades** opens edge retention by book and every trade across the books, in place of the selected book. One breakdown is open at a time; close it, or pick a book, to get the book back as you left it |
+| **Quoter settings** | Above the all-books grid: the quoter-wide settings, so far its order rate limits per second and per minute | Edit and **Apply**; they take effect at once and the quoter saves them, over its .env |
+| **Parameters · all books** | Every book's parameters in one grid, one row per book; pick the columns with **Columns**. Changed cells show in amber (hover for the old value), invalid ones in red | Edit any cell, or use the top row on the ticked books: **=** sets a value, **+** adds to each book's own, **×** scales it. A size column whose books read sizes in different units (one in USD, one in BTC) only takes ×. **Apply** sends each changed book its own changes (production asks first); a book that rejects its changes keeps them in the grid to fix |
+| **Trades** (from the All books bar) | Every fill this run: side, maker level or which taker, price, notional, fair value at the time, edge at fill, the +30s and +300s mark-outs, and how much edge was kept. A summary per book above it, with all books on its toolbar | Sort and filter by any column, as in the trading view's tables; drag the divider between the two |
+| **Book bar** | Quoting, waiting (with the reason, e.g. "reference feed silent") or stopped, and the book's reference | Start quoting (production asks first), Remove a stopped book with nothing resting |
+| **Book cards** | Three pairs: Prices and Reference sources, Position and Taking, Budget and Activity. Each pair sits side by side when there's room, and folds into one card with tabs when there isn't, so the screen needn't be wide. The cards fill their pane and scroll inside it, so they keep their height whichever tab shows | Pick a tab; it's remembered. Drag the divider under the cards to give them more or less room |
+| **Prices** | The reference price and its age, the mid after inventory skew, the exchange's best bid and ask, and how far each sits from the reference mid in bps and dollars | |
+| **Reference sources** | Each source in the book's blend: its price lined up by its multiplier, its share of the price, and any that's left out or looks like a split or multiplier. Under them, the exchange's own reference price for the book (from its instrument list), how far ours is from it, and the price band around it outside which the exchange rejects orders | **Edit…** changes sources, weights and multipliers, previewing each change against live prices before it's saved |
+| **Position** | The change in holdings (bought minus sold) since the date shown, against the max position change, average cost, realized and unrealized PnL, volume. Carried across quoter restarts | **Reset** starts the position, PnL and counts from zero |
+| **Taking** | Each side: the price a take would cross to and its size, the edge on offer against the edge needed (as a bar), and what's in the way: off, no edge (and how many bps away), below cost, too small, no funds, cool-down | |
+| **Budget** | What this book's bids and asks hold, out of what they may hold, with the share in use: green, yellow from 75%, red above 90% (the next order on that side may not fit), and the shared free balance | |
+| **Activity** | Creates, modifies and cancels sent, fills, rejects, takes (IOCs crossing the spread) sent and filled, the maker share of fills (resting orders hit, not takes), how many order changes were modifies, and how many times this book's requests hit the rate limit (with the requests refused). **Reset rejects** clears this book's reject, error and rate-limit counts | |
+| **Ladder** | Each level's target next to the order resting there, with an arrow while a modify is in flight, and in the header the spread between the ladder's own best bid and ask, in bps and dollars. Before you start, it previews what would be quoted | |
+| **Parameters** | Every strategy setting for this book, with its unit and what it does, including the profit taker and takeout switches under Taking | Edit any of them and press Apply; the book uses them on its next cycle, and the quoter saves them |
+| **Events** | Fills, rejects, parameter changes and connection changes as they happen; the next tab is this book's trades, with the same columns as the all-books list | Sort and filter the trades |
 
-## Run it
-
-Node 22 or newer.
-
-```bash
-npm install
-```
-
-```bash
-npm run demo
-```
-
-Open http://localhost:5181. Demo mode runs a simulated exchange in the server process: market makers keep the books moving, and a stand-in "strategy" places, moves and cancels your orders so there is something to watch. Pause it from the header.
-
-### Against True Markets
-
-1. Create an API key at [app.truemarkets.co](https://app.truemarkets.co) (Settings, API keys) on an account enabled for CeFi trading. The browser downloads a JSON file with `key_id` and a P-256 `private_key`.
-2. Move that file into `.secrets/`. Everything in that folder is gitignored. To keep it elsewhere, set `TM_API_KEY_PATH`.
-3. `npm run dev`. With a key present the server runs live; without one it falls back to demo.
-
-Optional settings go in `.env` next to `package.json`:
-
-| Variable | Default | What it does |
-| --- | --- | --- |
-| `TM_MODE` | `live` if a key is found, else `demo` | Force `demo` or `live` |
-| `TM_ENV` | `production` | `uat` points every call at the UAT sandbox hosts |
-| `TM_API_KEY_PATH` | `.secrets` | The key file, or a folder holding exactly one |
-| `TM_CLIENT_ID` | from the token | Your CeFi client id, if the token doesn't carry one |
-| `TM_ORGANIZATION_ID` | from the token | Organization keys only, sent on signed WebSocket requests. A personal key doesn't need it |
-| `TM_ACCOUNT_LABEL` | your email, from the token's `sub` claim | What the header calls your account. Without an email in the token it falls back to the CeFi client's mnemonic, or the client id when the mnemonic is an opaque hash |
-| `API_PORT` | `4850` | The server's port; the dev web server proxies `/api` and `/ws` to it |
-
-For day-to-day use, run the production build: `npm run build && npm start`, then open http://localhost:4850. It serves the UI and the API from one port, and React's production mode is several times faster than `npm run dev`, which is for editing the code.
+The browser reads `/api/quoter/*` on this server, which calls the quoter (`server/quoter.ts`). If the quoter isn't running, the screen says so and how to start it.
 
 ## Tables
 
@@ -139,6 +121,7 @@ server/
   app.ts         HTTP routes, input checks, cancel-by-symbol
   relay.ts       /ws: one exchange connection per browser socket
   live.ts        the True Markets backend: REST calls, WebSocket signing
+  quoter.ts      calls a running cefi-quoter's management API
   tm/            key file, ES256 signing, token minting, errors
   sim/           the in-process exchange used by demo mode and the tests
 shared/          wire types, API types, order and book logic used by both sides
@@ -148,7 +131,7 @@ web/src/
   api.ts         REST reads and actions (TanStack Query)
   db.ts          TanStack DB collections for orders and fills, mirrored from the store
   table/         the shared table: filters, column menu, resizing, saved layout
-  components/    Orders, Book, Ticket, Trades, Balances, Header
+  components/    Orders, Book, Ticket, Trades, Balances, Header, Quoter
 ```
 
 ## Tests

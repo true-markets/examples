@@ -3,11 +3,12 @@ import { ArrowDownToLine, ArrowUpFromLine, LoaderCircle } from "lucide-react";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import type { CefiBalance, CustodyMove } from "../../../shared/api.ts";
 import { isCustodyPending, isCustodySettled } from "../../../shared/api.ts";
-import { useBalances, useCustody, useCustodyMove } from "../api.ts";
-import { custodyAmount, floorDecimals, toRows, trimZeros, type AmountUnit, type AssetRow } from "../balances.ts";
+import { isListed, useBalances, useCustody, useCustodyMove, useInstruments } from "../api.ts";
+import { bookFor, custodyAmount, floorDecimals, toRows, trimZeros, type AmountUnit, type AssetRow } from "../balances.ts";
 import { ago, price as fmtPrice, qty, usd } from "../format.ts";
 import { DataTable, type ColMeta } from "../table/DataTable.tsx";
-import { Button, Empty, Field, Modal, Panel, Segmented, cx, inputClass, selectClass } from "./ui.tsx";
+import { useUi } from "../ui-state.tsx";
+import { Button, Empty, Field, Modal, Panel, Segmented, SymbolLink, cx, inputClass, selectClass } from "./ui.tsx";
 
 type Action = (kind: "allocations" | "releases", row: AssetRow) => void;
 
@@ -92,7 +93,7 @@ function usdText(v: number | null): string {
 }
 
 // Two lines in one cell: the figure you sort by on top, the quantity it comes from underneath.
-function Stack({ top, bottom, topClass, strong }: { top: ReactNode; bottom: ReactNode; topClass?: string; strong?: boolean }) {
+export function Stack({ top, bottom, topClass, strong }: { top: ReactNode; bottom: ReactNode; topClass?: string; strong?: boolean }) {
   return (
     <div className="leading-tight">
       <div className={cx("num", strong && "font-medium", topClass ?? "text-ink")}>{top}</div>
@@ -120,6 +121,9 @@ function cefiColumn(id: string, header: string, pick: (c: CefiBalance) => string
 
 function AssetTable({ rows, unsettledFees, onAction }: { rows: AssetRow[]; unsettledFees: number; onAction: Action }) {
   const [filters, setFilters] = useState<ColumnFiltersState>([]);
+  const { data: instruments } = useInstruments();
+  const { setSymbol } = useUi();
+  const symbols = useMemo(() => instruments?.filter(isListed).map((i) => i.symbol) ?? [], [instruments]);
   const columns = useMemo(
     () => [
       col.accessor("symbol", {
@@ -127,12 +131,21 @@ function AssetTable({ rows, unsettledFees, onAction }: { rows: AssetRow[]; unset
         header: "Asset",
         size: 96,
         meta: { label: "Asset", filter: { kind: "multi" } } satisfies ColMeta,
-        cell: (c) => (
-          <div className="leading-tight">
-            <div className="font-semibold text-ink">{c.getValue()}</div>
-            <div className="num text-[10px] text-faint">{c.row.original.price !== null ? `$${fmtPrice(c.row.original.price, c.row.original.price >= 1 ? 2 : 6)}` : "no price"}</div>
-          </div>
-        ),
+        cell: (c) => {
+          const book = bookFor(c.getValue(), symbols);
+          return (
+            <div className="leading-tight">
+              {book ? (
+                <SymbolLink className="font-semibold text-ink" onOpen={() => setSymbol(book)} title={`Open ${book}`}>
+                  {c.getValue()}
+                </SymbolLink>
+              ) : (
+                <div className="font-semibold text-ink">{c.getValue()}</div>
+              )}
+              <div className="num text-[10px] text-faint">{c.row.original.price !== null ? `$${fmtPrice(c.row.original.price, c.row.original.price >= 1 ? 2 : 6)}` : "no price"}</div>
+            </div>
+          );
+        },
       }),
       // Every column below shows USD on top and the quantity under it, and sorts by the top line.
       col.accessor("valueUsd", {
@@ -222,7 +235,7 @@ function AssetTable({ rows, unsettledFees, onAction }: { rows: AssetRow[]; unset
         },
       }),
     ],
-    [onAction, unsettledFees],
+    [onAction, unsettledFees, symbols, setSymbol],
   );
 
   // Choices for the Asset filter, from the rows shown before filtering.

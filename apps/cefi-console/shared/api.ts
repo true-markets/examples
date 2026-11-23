@@ -14,6 +14,8 @@ export interface Session {
   accountLabel: string | null;
   // Why something is missing, in plain words, so the UI can say it instead of failing quietly.
   warnings: string[];
+  // Set when QUOTER_URL points at a cefi-quoter; the header then shows the Quoter screen.
+  quoter?: { url: string } | null;
 }
 
 export interface Instrument {
@@ -216,4 +218,333 @@ export function isCustodySettled(move: CustodyMove): boolean {
 export interface ApiError {
   error: string;
   status?: number;
+}
+
+// ---------- cefi-quoter management API (apps/cefi-quoter), passed through by this server ----------
+// Decimals are strings, as everywhere else; plain numbers are numbers.
+
+export interface QuoterParamSpec {
+  key: string;
+  label: string;
+  type: "number" | "integer" | "decimal" | "choice" | "boolean";
+  // A fixed unit (bps, ms, x), "quote" for the quote currency, or "size" for a size in whichever
+  // unit sizeUnit chooses (the base asset or the quote currency).
+  unit?: string;
+  help: string;
+  min?: number;
+  max?: number;
+  options?: string[]; // choice only
+}
+
+export type QuoterParams = Record<string, number | string | boolean>;
+
+export interface QuoterParamsResponse {
+  params: QuoterParams;
+  schema: QuoterParamSpec[];
+}
+
+// The quoter-wide settings (not any one book's), with the same kind of schema as a book's parameters.
+export interface QuoterSettingsResponse {
+  settings: QuoterParams;
+  schema: QuoterParamSpec[];
+}
+
+export interface QuoterConn {
+  up: boolean;
+  reason?: string;
+  since: string;
+}
+
+export interface QuoterOrder {
+  externalId: string;
+  orderId?: string;
+  side: "BUY" | "SELL";
+  level: number;
+  price: string;
+  qty: string;
+  leaves: string;
+  executed: string;
+  pendingPrice?: string;
+  pendingQty?: string;
+  status: "NEW_PENDING" | "ACTIVE" | "MODIFY_PENDING" | "CANCEL_PENDING";
+  pendingMs?: number;
+  take?: boolean; // an IOC crossing the spread (level -1), not a resting quote
+}
+
+export interface QuoterTarget {
+  side: "BUY" | "SELL";
+  level: number;
+  price: string;
+  qty: string;
+}
+
+export interface QuoterEvent {
+  time: string;
+  kind: "info" | "warn" | "fill" | "take" | "reject" | "param";
+  message: string;
+}
+
+export interface QuoterMarket {
+  symbol: string;
+  instrumentId: string;
+  baseAssetId: string;
+  quoteAssetId: string;
+  baseSymbol: string;
+  quoteSymbol: string;
+  reference: string; // the main source of fair value: a Coinbase product (BTC-USD), hyperliquid:xyz:GOOGL, kraken:GOOGLx/USD
+  blend: QuoterBlend;
+}
+
+// A book's reference price: a weighted average of one or more sources, each lined up with a
+// multiplier. See apps/cefi-quoter/reference/blend.go.
+export interface QuoterSource {
+  ref: string;
+  weight: number; // 0 watches the source: checked against the others, not part of the price
+  multiplier?: string; // turns the source's price into the price of one share; 1 if left out
+}
+
+export interface QuoterBlend {
+  sources: QuoterSource[];
+  weighting?: "fixed" | "depth";
+  maxDeviationBps?: number; // a source further than this from the others is left out
+  tokenMultiplier?: string; // shares per token of the book; 1 if left out
+}
+
+export interface QuoterCorporateAction {
+  kind: "split" | "multiplier" | "drift";
+  ratio: number;
+  multiplier: string; // the source multiplier that would line it up
+  text: string;
+}
+
+export interface QuoterSourceView {
+  ref: string;
+  name: string;
+  weight: number;
+  multiplier: string;
+  bid: string | null;
+  ask: string | null;
+  mid: string | null;
+  adjusted: string | null; // mid × multiplier
+  spreadBps: number | null;
+  depthUsd: string | null;
+  ageMs: number | null;
+  share: number; // of the blended price, 0 to 1
+  gapBps: number | null; // against the other sources
+  state: "in" | "watch" | "waiting" | "stale" | "out";
+  note?: string;
+  action?: QuoterCorporateAction;
+}
+
+export interface QuoterBlendView {
+  sources: QuoterSourceView[];
+  weighting: "fixed" | "depth";
+  maxDeviationBps: number;
+  tokenMultiplier: string;
+  perShare: string | null;
+  mid: string | null; // the book's fair value: per share × token multiplier
+  bid: string | null;
+  ask: string | null;
+  used: number;
+  problem?: string;
+}
+
+// POST /api/references/{symbol}/preview
+export interface QuoterReferencePreview {
+  symbol: string;
+  blend: QuoterBlendView;
+  bookBid: string | null;
+  bookAsk: string | null;
+  bookMid: string | null;
+  bookGapBps: number | null;
+  tokenMultiplier: string | null; // what would line the blend up with the book's own mid
+  warnings: string[];
+}
+
+// GET /api/books/{symbol}: one book in full.
+export interface QuoterStatus {
+  market: QuoterMarket;
+  enabled: boolean;
+  state: "quoting" | "waiting" | "stopped";
+  reason?: string;
+  params: QuoterParams;
+  reference: { mid: string; bid: string; ask: string; ageMs: number } | null;
+  bestBid: string | null;
+  bestAsk: string | null;
+  mid: string | null;
+  skewBps: number;
+  // Since is when the position started counting (the book's first start, or its last reset); it
+  // carries across quoter restarts.
+  position: { qty: string; avgCost: string; realizedPnl: string; unrealizedPnl: string; volumeBase: string; volumeQuote: string; since: string };
+  // Free is shared by every book on the asset; budget and held are this book's.
+  balances: { freeBase: string; freeQuote: string; budgetBase: string; budgetQuote: string; heldBase: string; heldQuote: string; readAt: string | null };
+  orders: QuoterOrder[];
+  targets: QuoterTarget[];
+  stats: {
+    creates: number;
+    modifies: number;
+    cancels: number;
+    rejects: number;
+    errors: number;
+    fills: number;
+    takes: number;
+    takeFills: number;
+    // Requests refused for the exchange's rate limit, and how many of those paused every book.
+    rateLimited?: number;
+    rateLimitPauses?: number;
+  };
+  events: QuoterEvent[];
+  warnings: string[];
+  taking: QuoterTakeView | null;
+  blend?: QuoterBlendView;
+}
+
+// How close one side is to a take. BUY takes the best ask; SELL hits the best bid.
+export interface QuoterTakeSide {
+  side: "BUY" | "SELL";
+  kind: "profit take" | "takeout";
+  enabled: boolean;
+  price: string | null;
+  qty: string; // shown there by other people
+  edgeBps: number | null; // net, over the skewed mid
+  thresholdBps: number;
+  size: string; // what a take would send now
+  blocker?: string; // why it isn't taking; absent means it would
+}
+
+export interface QuoterTakeView {
+  buy: QuoterTakeSide;
+  sell: QuoterTakeSide;
+}
+
+type QuoterStats = QuoterStatus["stats"];
+
+// Every book on one quote currency, added up.
+export interface QuoterTotals {
+  quote: string;
+  books: number;
+  quoting: number;
+  realizedPnl: string;
+  unrealizedPnl: string;
+  volumeQuote: string;
+  orders: number;
+  stats: QuoterStats;
+}
+
+// One fill, with its edge at the time and mark-outs later (bps in our favor; null until due).
+export interface QuoterTrade {
+  id: number;
+  time: string;
+  symbol: string;
+  quote: string;
+  side: "BUY" | "SELL";
+  kind: string; // maker, profit take or takeout
+  level: number;
+  qty: string;
+  price: string;
+  notional: string;
+  refMid: string;
+  edgeBps: number;
+  markouts: (number | null)[];
+  recovered?: boolean; // filled while the quoter was down: no fair value, left out of the averages
+  unpriced?: boolean; // filled while the book had no reference price: the same
+}
+
+export interface QuoterTradeSummary {
+  symbol: string; // "" for every book
+  trades: number;
+  notional: string;
+  edgeBps: number | null;
+  edgePnl: number | null; // edge at fill in quote currency, summed
+  markouts: (number | null)[];
+  retention: (number | null)[];
+  marked: number[];
+  markedPnl: (number | null)[];
+  byKind: Record<string, number>;
+  horizonsSecs: number[];
+}
+
+// A request the exchange refused, or that failed to send.
+export interface QuoterReject {
+  time: string;
+  book: string;
+  request?: "create" | "modify" | "cancel";
+  side?: "BUY" | "SELL";
+  level?: string; // L0, L1, ... or take
+  price?: string;
+  qty?: string;
+  reason: string;
+  via: string; // drop copy, FIX cancel reject, or send
+}
+
+export interface QuoterTradesReport {
+  trades: QuoterTrade[];
+  total: QuoterTradeSummary;
+  byBook: QuoterTradeSummary[];
+  horizonsSecs: number[];
+}
+
+// One line per book in the desk status.
+export interface QuoterBookSummary {
+  market: QuoterMarket;
+  enabled: boolean;
+  state: QuoterStatus["state"];
+  reason?: string;
+  reference: string | null;
+  position: string;
+  realizedPnl: string;
+  unrealizedPnl: string;
+  orders: number;
+  fills: number;
+  heldBase: string;
+  heldQuote: string;
+  budgetBase: string;
+  budgetQuote: string;
+  maxQuoteAlloc: string;
+  maxBaseAlloc: string;
+  volumeQuote: string;
+  stats: QuoterStats;
+}
+
+// One asset in the ledger every book shares: free = spendable - foreign holds - our holds.
+export interface QuoterAssetBalance {
+  assetId: string;
+  symbol: string;
+  spendable: string;
+  foreignHold: string;
+  ourHold: string;
+  free: string;
+  price: string | null; // one unit in the quote currency: 1 for USDC, a book's reference mid otherwise
+}
+
+export interface QuoterListing {
+  symbol: string;
+  instrumentId: string;
+  baseSymbol: string;
+  quoteSymbol: string;
+  reference: string;
+  underlying?: string;
+  stock?: boolean;
+}
+
+// GET /api/status: the whole quoter process.
+export interface QuoterDeskStatus {
+  mode: "live" | "paper";
+  // The client order id prefix on every order the quoter places. Older quoters don't send it.
+  idPrefix?: string;
+  environment: "production" | "uat" | "paper";
+  transport: "rest" | "fix" | "paper";
+  clientId: string;
+  startedAt: string;
+  connections: Partial<Record<"dropcopy" | "market" | "reference" | "orders", QuoterConn>>;
+  balances: QuoterAssetBalance[];
+  balancesReadAt: string | null;
+  books: QuoterBookSummary[];
+  available: QuoterListing[];
+  warnings: string[];
+  totals: QuoterTotals[];
+  trades: QuoterTradeSummary;
+  // The request pacer every book shares. Older quoters don't send it.
+  // used / usedMin: new orders and modifies in the last second / minute; peak: the most in any second over the last minute.
+  rateLimit?: { perSec: number; perMin?: number; used?: number; usedMin?: number; peak?: number; pausedForMs: number; lastAt: string | null };
 }

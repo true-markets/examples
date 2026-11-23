@@ -1,0 +1,6 @@
+.env
+.secrets/*
+!.secrets/.gitkeep
+/cefi-quoter
+/books.json
+/state.*.json

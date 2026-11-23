@@ -1,6 +1,8 @@
 import { Hono, type Context } from "hono";
 import type { CancelResult, DefiOrderInput, ModifyOrderInput, NewOrderInput } from "../shared/api.ts";
+import { isQuoterOwned, type QuoterOwned } from "../shared/orders.ts";
 import type { Backend } from "./backend.ts";
+import type { QuoterClient } from "./quoter.ts";
 import { SimBackend } from "./sim/backend.ts";
 import { errorMessage, TmError } from "./tm/errors.ts";
 
@@ -8,7 +10,7 @@ const DECIMAL = /^\d+(\.\d+)?$/;
 // Cancels for one symbol go out a few at a time to stay well inside rate limits.
 const CANCEL_CONCURRENCY = 5;
 
-export function createApp(backend: Backend): Hono {
+export function createApp(backend: Backend, quoter?: QuoterClient): Hono {
   const app = new Hono();
 
   app.onError((err, c) => {
@@ -17,7 +19,7 @@ export function createApp(backend: Backend): Hono {
     return c.json({ error: errorMessage(err), status }, status as 400);
   });
 
-  app.get("/api/session", async (c) => c.json(await backend.session()));
+  app.get("/api/session", async (c) => c.json({ ...(await backend.session()), quoter: quoter ? { url: quoter.url } : null }));
   app.get("/api/instruments", async (c) => c.json(await backend.instruments()));
   app.get("/api/orders", async (c) => c.json(await backend.orders()));
   app.get("/api/fills", async (c) => c.json(await backend.fills(c.req.query("recent") === "1")));
@@ -42,10 +44,12 @@ export function createApp(backend: Backend): Hono {
 
   // With a symbol, cancels only that instrument's orders. The exchange has no such call, so this
   // reads the active orders and cancels each one. Without a symbol, it is the exchange's cancel-all.
+  // keepQuoter leaves the orders a running quoter keeps resting (see isQuoterOwned), which means
+  // canceling the rest one by one, even without a symbol.
   app.post("/api/orders/cancel-all", async (c) => {
-    const { symbol } = await json<{ symbol?: string }>(c);
-    if (!symbol) return c.json(await backend.cancelAll());
-    const targets = (await backend.activeOrders()).filter((o) => o.symbol === symbol);
+    const { symbol, keepQuoter } = await json<{ symbol?: string; keepQuoter?: QuoterOwned }>(c);
+    if (!symbol && !keepQuoter) return c.json(await backend.cancelAll());
+    const targets = (await backend.activeOrders()).filter((o) => (!symbol || o.symbol === symbol) && !isQuoterOwned(o, keepQuoter));
     return c.json(await cancelEach(backend, targets.map((o) => o.orderId)));
   });
 
@@ -72,6 +76,65 @@ export function createApp(backend: Backend): Hono {
   });
   app.post("/api/defi/:id/execute", async (c) => c.json(await backend.executeDefi(c.req.param("id"))));
   app.get("/api/defi/:id", async (c) => c.json(await backend.defiOrder(c.req.param("id"))));
+
+  // The cefi-quoter's management API, passed through. Present only when QUOTER_URL is set.
+  const needQuoter = (): QuoterClient => {
+    if (!quoter) throw new TmError("no quoter configured: set QUOTER_URL to the cefi-quoter's management address", 404);
+    return quoter;
+  };
+  const bookSymbol = (raw: string): string => {
+    if (!/^[A-Za-z0-9]+[-/][A-Za-z0-9]+$/.test(raw)) throw new TmError(`${raw} isn't a book symbol`, 400);
+    return raw;
+  };
+  app.get("/api/quoter/status", async (c) => c.json(await needQuoter().status()));
+  app.get("/api/quoter/trades", async (c) => c.json(await needQuoter().trades(Number(c.req.query("limit") ?? 500) || 500)));
+  app.get("/api/quoter/rejects", async (c) => c.json(await needQuoter().rejects(Number(c.req.query("limit") ?? 1000) || 1000)));
+  app.post("/api/quoter/books", async (c) => {
+    const body = await json<{ symbol?: unknown; reference?: unknown; blend?: unknown }>(c);
+    if (typeof body?.symbol !== "string") throw new TmError("send the symbol of the book to add", 400);
+    const reference = typeof body.reference === "string" ? body.reference.trim() : undefined;
+    return c.json(await needQuoter().addBook(bookSymbol(body.symbol), reference, blendBody(body.blend, true)));
+  });
+  // A blend is checked by the quoter; here it only has to be an object with a list of sources.
+  const blendBody = (raw: unknown, optional = false): unknown => {
+    if (raw === undefined && optional) return undefined;
+    if (typeof raw !== "object" || raw === null || !Array.isArray((raw as { sources?: unknown }).sources)) {
+      throw new TmError("send a reference blend: an object with a list of sources", 400);
+    }
+    return raw;
+  };
+  app.put("/api/quoter/books/:symbol/reference", async (c) =>
+    c.json(await needQuoter().setReference(bookSymbol(c.req.param("symbol")), blendBody(await json(c)))),
+  );
+  app.get("/api/quoter/references/:symbol/suggest", async (c) => c.json(await needQuoter().suggestSources(bookSymbol(c.req.param("symbol")))));
+  app.post("/api/quoter/references/:symbol/preview", async (c) =>
+    c.json(await needQuoter().previewReference(bookSymbol(c.req.param("symbol")), blendBody(await json(c)))),
+  );
+  app.get("/api/quoter/books/:symbol", async (c) => c.json(await needQuoter().book(bookSymbol(c.req.param("symbol")))));
+  app.delete("/api/quoter/books/:symbol", async (c) => c.json(await needQuoter().removeBook(bookSymbol(c.req.param("symbol")))));
+  app.get("/api/quoter/settings", async (c) => c.json(await needQuoter().settings()));
+  app.patch("/api/quoter/settings", async (c) => {
+    const body = await json<Record<string, unknown>>(c);
+    if (typeof body !== "object" || body === null || Array.isArray(body) || Object.keys(body).length === 0) {
+      throw new TmError("send an object of the settings to change", 400);
+    }
+    return c.json(await needQuoter().updateSettings(body));
+  });
+  app.get("/api/quoter/books/:symbol/params", async (c) => c.json(await needQuoter().params(bookSymbol(c.req.param("symbol")))));
+  app.patch("/api/quoter/books/:symbol/params", async (c) => {
+    const body = await json<Record<string, unknown>>(c);
+    if (typeof body !== "object" || body === null || Array.isArray(body) || Object.keys(body).length === 0) {
+      throw new TmError("send an object of the parameters to change", 400);
+    }
+    return c.json(await needQuoter().updateParams(bookSymbol(c.req.param("symbol")), body));
+  });
+  app.post("/api/quoter/books/:symbol/reset", async (c) => c.json(await needQuoter().resetPosition(bookSymbol(c.req.param("symbol")))));
+  app.post("/api/quoter/books/:symbol/reset-rejects", async (c) => c.json(await needQuoter().resetRejects(bookSymbol(c.req.param("symbol")))));
+  app.post("/api/quoter/reset-rejects", async (c) => c.json(await needQuoter().resetRejects()));
+  app.post("/api/quoter/books/:symbol/:action{start|stop}", async (c) =>
+    c.json(await needQuoter().control(c.req.param("action") as "start" | "stop", bookSymbol(c.req.param("symbol")))),
+  );
+  app.post("/api/quoter/:action{start|stop}", async (c) => c.json(await needQuoter().control(c.req.param("action") as "start" | "stop")));
 
   // Demo only: pause or resume the simulated strategy.
   app.get("/api/demo/strategy", (c) => {

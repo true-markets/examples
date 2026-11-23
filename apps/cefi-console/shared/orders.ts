@@ -13,6 +13,18 @@ export function isOpen(status: OrderStatus): boolean {
   return OPEN.has(status);
 }
 
+// Orders the quoter keeps resting: its client order id prefix, on a book it's quoting. Canceling one
+// only has the quoter put it back on its next cycle, so cancel-all leaves them to the quoter's own
+// stop buttons.
+export interface QuoterOwned {
+  prefix: string;
+  symbols: string[]; // the books the quoter is quoting
+}
+
+export function isQuoterOwned(o: { symbol: string; externalId?: string }, q: QuoterOwned | undefined): boolean {
+  return !!q && !!q.prefix && !!o.externalId?.startsWith(q.prefix) && q.symbols.includes(o.symbol);
+}
+
 // Only resting, unpending orders can take a cancel or a modify.
 export function isActionable(status: OrderStatus): boolean {
   return status === "ACTIVE" || status === "NEW_PENDING";

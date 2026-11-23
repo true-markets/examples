@@ -9,6 +9,7 @@ import { Workspace } from "./components/Layout.tsx";
 import { Markets } from "./components/Markets.tsx";
 import { OrderBook } from "./components/OrderBook.tsx";
 import { OrdersTable } from "./components/OrdersTable.tsx";
+import { QuoterScreen } from "./components/Quoter.tsx";
 import { Ticket } from "./components/Ticket.tsx";
 import { Trades } from "./components/Trades.tsx";
 import { cx } from "./components/ui.tsx";
@@ -94,17 +95,26 @@ function Toasts() {
 }
 
 function App() {
+  const { view } = useUi();
+  const { data: session } = useSession();
+  const quoter = view === "quoter" && !!session?.quoter;
   return (
     <div className="flex h-full flex-col">
       <Streams />
       <Header />
       <Warnings />
-      <main className="flex min-h-0 flex-1 flex-col gap-2 p-2">
-        <Markets />
-        <div className="min-h-0 flex-1">
-          <Workspace orders={<OrdersTable />} fills={<Trades />} balances={<Balances />} book={<OrderBook />} ticket={<Ticket />} />
-        </div>
-      </main>
+      {quoter ? (
+        <main className="min-h-0 flex-1 overflow-hidden p-2">
+          <QuoterScreen />
+        </main>
+      ) : (
+        <main className="flex min-h-0 flex-1 flex-col gap-2 p-2">
+          <Markets />
+          <div className="min-h-0 flex-1">
+            <Workspace orders={<OrdersTable />} fills={<Trades />} balances={<Balances />} book={<OrderBook />} ticket={<Ticket />} />
+          </div>
+        </main>
+      )}
       <Toasts />
     </div>
   );

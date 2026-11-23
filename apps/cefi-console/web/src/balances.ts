@@ -91,3 +91,10 @@ export function floorDecimals(x: number, d: number): string {
 export function trimZeros(s: string): string {
   return s.includes(".") ? s.replace(/\.?0+$/, "") : s;
 }
+
+// The book to open for an asset: a listed instrument with it as the base, quoted in USDC if there's
+// one. None for an asset that's only ever the quote, like USDC itself.
+export function bookFor(asset: string, symbols: string[]): string | undefined {
+  const mine = symbols.filter((s) => s.split("-")[0] === asset);
+  return mine.find((s) => s.endsWith("-USDC")) ?? mine[0];
+}

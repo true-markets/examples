@@ -80,3 +80,10 @@ export function ago(ms: number): string {
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   return `${Math.floor(s / 3600)}h ago`;
 }
+
+// Every book's quote currency is a dollar stablecoin (USDC today; it may change), so amounts in
+// it are labeled USD. Anything else keeps its own symbol.
+export function quoteUnit(symbol: string): string {
+  const s = symbol.toUpperCase();
+  return s.startsWith("USD") || s.endsWith("USD") || s === "DAI" ? "USD" : symbol;
+}

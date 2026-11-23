@@ -207,9 +207,27 @@ describe("DeFi orders through the gateway", () => {
     data: [
       { id: "cefi-nvdac", venue: "cefi", symbol: "NVDAC", chain: null, economic_asset_id: "econ-nvda", cefi_instrument: "NVDAC-USDC", order_types: ["market", "limit"] },
       { id: "defi-nvdac", venue: "defi", symbol: "NVDAC", chain: "base", economic_asset_id: "econ-nvda", order_types: ["market"] },
+      // A halted CeFi market: its catalog entry has no cefi_instrument.
+      { id: "cefi-sndkc", venue: "cefi", symbol: "SNDKC", chain: null, economic_asset_id: "econ-sndk", cefi_instrument: null, order_types: ["market", "limit"] },
+      { id: "defi-sndkc", venue: "defi", symbol: "SNDKC", chain: "base", economic_asset_id: "econ-sndk", order_types: ["market"] },
     ],
   };
-  const instruments = { data: [{ id: "79053265670171223", status: "ACTIVE", info: { symbol: "NVDAC-USDC" } }] };
+  const instruments = {
+    data: [
+      { id: "79053265670171223", status: "ACTIVE", info: { symbol: "NVDAC-USDC" } },
+      { id: "79053265670171224", status: "HALTED", info: { symbol: "SNDKC-USDC" } },
+    ],
+  };
+
+  it("finds the DeFi listing of a halted CeFi market too", async () => {
+    const { file } = keyFile();
+    gateway({});
+    const live = new LiveBackend({ port: 0, mode: "live", environment: "production", keyFile: file });
+    const list = await live.instruments();
+    expect(list.find((i) => i.symbol === "SNDKC-USDC")?.defi?.assetId).toBe("defi-sndkc");
+    expect(list.find((i) => i.symbol === "NVDAC-USDC")?.defi?.assetId).toBe("defi-nvdac");
+    vi.unstubAllGlobals();
+  });
 
   function gateway(orderBody: object) {
     const calls: { url: URL; method: string; body?: any }[] = [];

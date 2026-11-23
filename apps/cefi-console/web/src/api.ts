@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type {
   Balances,
@@ -12,9 +12,20 @@ import type {
   ModifyOrderInput,
   NewOrderInput,
   OrderRow,
+  QuoterBlend,
+  QuoterDeskStatus,
+  QuoterParams,
+  QuoterParamsResponse,
+  QuoterReferencePreview,
+  QuoterSource,
+  QuoterStatus,
+  QuoterReject,
+  QuoterSettingsResponse,
+  QuoterTradesReport,
   Session,
 } from "../../shared/api.ts";
 import { isCustodyPending, isCustodySettled, isDefiDone } from "../../shared/api.ts";
+import type { QuoterOwned } from "../../shared/orders.ts";
 import { usd as usdText } from "./format.ts";
 import { isLive, store } from "./store.ts";
 import { toast } from "./toast.ts";
@@ -156,10 +167,13 @@ function cancelSummary(r: CancelResult, what: string): string {
 }
 
 // Cancels many orders: everything (symbol undefined), or one symbol's orders.
+// keepQuoter leaves the orders a running quoter keeps resting (see isQuoterOwned).
 export const useCancelAll = () =>
-  useAction((symbol: string | undefined) => call<CancelResult>("POST", "/api/orders/cancel-all", { symbol }), {
-    success: (r, symbol) => cancelSummary(r, symbol ? `in ${symbol}` : "everywhere"),
-  });
+  useAction(
+    ({ symbol, keepQuoter }: { symbol?: string; keepQuoter?: QuoterOwned }) =>
+      call<CancelResult>("POST", "/api/orders/cancel-all", { symbol, keepQuoter }),
+    { success: (r, { symbol }) => cancelSummary(r, symbol ? `in ${symbol}` : "everywhere") },
+  );
 
 // Cancels a hand-picked set, one request per order.
 export const useCancelMany = () =>
@@ -219,3 +233,172 @@ export function useDefiOrder(orderId: string | undefined) {
   }, [done, qc]);
   return q;
 }
+
+// ---------- cefi-quoter ----------
+
+// Once a second while the Quoter screen is open. Each read is one local HTTP call to the quoter; it
+// never reaches True Markets.
+export const useQuoterStatus = (enabled: boolean) =>
+  useQuery({
+    queryKey: ["quoter-status"],
+    queryFn: () => call<QuoterDeskStatus>("GET", "/api/quoter/status"),
+    enabled,
+    refetchInterval: 1_000,
+    retry: false,
+  });
+
+export const useQuoterRejects = (enabled: boolean) =>
+  useQuery({
+    queryKey: ["quoter-rejects"],
+    queryFn: () => call<{ rejects: QuoterReject[] }>("GET", "/api/quoter/rejects?limit=1000"),
+    enabled,
+    refetchInterval: 2_000,
+    retry: false,
+  });
+
+export const useQuoterTrades = (enabled: boolean) =>
+  useQuery({
+    queryKey: ["quoter-trades"],
+    queryFn: () => call<QuoterTradesReport>("GET", "/api/quoter/trades?limit=500"),
+    enabled,
+    refetchInterval: 2_000,
+    retry: false,
+  });
+
+const bookPath = (symbol: string) => `/api/quoter/books/${encodeURIComponent(symbol)}`;
+
+export const useQuoterBook = (symbol: string | undefined) =>
+  useQuery({
+    queryKey: ["quoter-book", symbol],
+    queryFn: () => call<QuoterStatus>("GET", bookPath(symbol!)),
+    enabled: !!symbol,
+    refetchInterval: 1_000,
+    retry: false,
+  });
+
+export const useQuoterParams = (symbol: string | undefined) =>
+  useQuery({ queryKey: ["quoter-params", symbol], queryFn: () => call<QuoterParamsResponse>("GET", `${bookPath(symbol!)}/params`), enabled: !!symbol, retry: false });
+
+export const useQuoterSettings = (enabled: boolean) =>
+  useQuery({ queryKey: ["quoter-settings"], queryFn: () => call<QuoterSettingsResponse>("GET", "/api/quoter/settings"), enabled, retry: false });
+
+export const useUpdateQuoterSettings = () =>
+  useAction((patch: QuoterParams) => call<QuoterSettingsResponse>("PATCH", "/api/quoter/settings", patch), {
+    success: (_r, patch) => `Quoter: set ${Object.keys(patch).join(", ")}`,
+    invalidate: ["quoter-settings", "quoter-status"],
+  });
+
+export const useUpdateQuoterParams = () =>
+  useAction(({ symbol, patch }: { symbol: string; patch: QuoterParams }) => call<{ params: QuoterParams }>("PATCH", `${bookPath(symbol)}/params`, patch), {
+    success: (_r, { symbol, patch }) => `${symbol}: set ${Object.keys(patch).join(", ")}`,
+    invalidate: ["quoter-params", "quoter-book", "quoter-status"],
+  });
+
+// Every book's parameters at once, for the all-books editor. Shares the cache with each book's own
+// Parameters panel.
+export const useAllQuoterParams = (symbols: string[], enabled: boolean) =>
+  useQueries({
+    queries: symbols.map((symbol) => ({
+      queryKey: ["quoter-params", symbol],
+      queryFn: () => call<QuoterParamsResponse>("GET", `${bookPath(symbol)}/params`),
+      enabled,
+      retry: false,
+    })),
+  });
+
+// Patches several books, one after another. Each book takes its own patch or rejects it; one
+// rejection doesn't stop the rest. Resolves with what happened to each.
+export interface BulkParamsResult {
+  symbol: string;
+  error?: string;
+}
+export function useBulkUpdateQuoterParams() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (patches: { symbol: string; patch: QuoterParams }[]) => {
+      const out: BulkParamsResult[] = [];
+      for (const { symbol, patch } of patches) {
+        try {
+          await call("PATCH", `${bookPath(symbol)}/params`, patch);
+          out.push({ symbol });
+        } catch (err) {
+          out.push({ symbol, error: (err as Error).message });
+        }
+      }
+      return out;
+    },
+    onSettled: () => {
+      for (const key of ["quoter-params", "quoter-book", "quoter-status"]) void qc.invalidateQueries({ queryKey: [key] });
+    },
+    onSuccess: (out) => {
+      const ok = out.filter((r) => !r.error).length;
+      const failed = out.filter((r) => r.error);
+      if (ok) toast.ok(`Parameters set on ${ok} book${ok === 1 ? "" : "s"}`);
+      for (const f of failed) toast.error(`${f.symbol}: ${f.error}`);
+    },
+    onError: (err) => toast.error(err.message),
+  });
+}
+
+// Start or stop one book, or every book when symbol is left out.
+export const useQuoterControl = () =>
+  useAction(
+    ({ action, symbol }: { action: "start" | "stop"; symbol?: string }) =>
+      call<{ enabled: boolean }>("POST", symbol ? `${bookPath(symbol)}/${action}` : `/api/quoter/${action}`),
+    {
+      success: (r, { symbol }) => `${symbol ?? "Every book"}: ${r.enabled ? "quoting started" : "stopped; pulling quotes"}`,
+      invalidate: ["quoter-status", "quoter-book"],
+    },
+  );
+
+export const useResetQuoterPosition = () =>
+  useAction((symbol: string) => call("POST", `${bookPath(symbol)}/reset`), {
+    success: (_r, symbol) => `${symbol}: position, PnL and counts reset`,
+    invalidate: ["quoter-book", "quoter-status"],
+  });
+
+// Start one book's reject, error and rate-limit counts from zero, or every book's.
+export const useResetQuoterRejects = () =>
+  useAction((symbol?: string) => call("POST", symbol ? `${bookPath(symbol)}/reset-rejects` : "/api/quoter/reset-rejects"), {
+    success: (_r, symbol) => `${symbol ?? "Every book"}: reject counts reset`,
+    invalidate: ["quoter-book", "quoter-status", "quoter-rejects"],
+  });
+
+export const useAddQuoterBook = () =>
+  useAction((input: { symbol: string; reference?: string; blend?: QuoterBlend }) => call<{ market: { symbol: string } }>("POST", "/api/quoter/books", input), {
+    success: (r) => `${r.market.symbol} added, stopped`,
+    invalidate: ["quoter-status"],
+  });
+
+// The reference sources the quoter finds for a book (perps, tokenized stocks, spot), for setup.
+export const useQuoterSuggest = (symbol: string | undefined) =>
+  useQuery({
+    queryKey: ["quoter-suggest", symbol],
+    queryFn: () => call<{ sources: QuoterSource[] }>("GET", `/api/quoter/references/${encodeURIComponent(symbol!)}/suggest`),
+    enabled: !!symbol,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+
+// A blend evaluated against live prices every two seconds while it's being set up; nothing saved.
+export const useQuoterPreview = (symbol: string | undefined, blend: QuoterBlend | undefined) =>
+  useQuery({
+    queryKey: ["quoter-preview", symbol, blend],
+    queryFn: () => call<QuoterReferencePreview>("POST", `/api/quoter/references/${encodeURIComponent(symbol!)}/preview`, blend),
+    enabled: !!symbol && !!blend && blend.sources.length > 0,
+    refetchInterval: 2_000,
+    placeholderData: (prev) => prev,
+    retry: false,
+  });
+
+export const useSetQuoterReference = () =>
+  useAction(({ symbol, blend }: { symbol: string; blend: QuoterBlend }) => call<{ market: { symbol: string } }>("PUT", `${bookPath(symbol)}/reference`, blend), {
+    success: (r) => `${r.market.symbol}: reference updated`,
+    invalidate: ["quoter-book", "quoter-status"],
+  });
+
+export const useRemoveQuoterBook = () =>
+  useAction((symbol: string) => call("DELETE", bookPath(symbol)), {
+    success: (_r, symbol) => `${symbol} removed`,
+    invalidate: ["quoter-status"],
+  });

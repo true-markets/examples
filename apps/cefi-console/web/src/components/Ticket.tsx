@@ -35,11 +35,16 @@ export function Ticket() {
   const [quote, setQuote] = useState<DefiQuote>();
   const [lastDefi, setLastDefi] = useState<string>();
 
-  const defi = instruments?.find((i) => i.symbol === symbol)?.defi;
-  // Not every book has a DeFi listing; fall back to CeFi when it doesn't.
+  const inst = instruments?.find((i) => i.symbol === symbol);
+  const defi = inst?.defi;
+  // A halted CeFi book takes no orders; its DeFi listing still trades.
+  const status = (symbol && store.instruments.get(symbol)?.status) || inst?.status;
+  const halted = !!status && /HALT/i.test(status);
+  // Not every book has a DeFi listing; fall back to CeFi when it doesn't, and to DeFi when CeFi is halted.
   useEffect(() => {
     if (venue === "DEFI" && instruments && !defi) setVenue("CEFI");
-  }, [venue, defi, instruments]);
+    if (venue === "CEFI" && halted && defi) setVenue("DEFI");
+  }, [venue, defi, instruments, halted]);
 
   // A click on the book fills in the price and the side that would rest there.
   useEffect(() => {
@@ -47,7 +52,7 @@ export function Ticket() {
     if (ticket.price) {
       setPrice(ticket.price);
       setType("LIMIT");
-      setVenue("CEFI");
+      if (!halted) setVenue("CEFI");
     }
     if (ticket.side) setSide(ticket.side);
   }, [ticket]);
@@ -74,7 +79,8 @@ export function Ticket() {
     base: baseSymbol,
     defiDecimals: defi?.decimals,
   });
-  const valid = !!symbol && sized.ok;
+  const cefiHalted = !onDefi && halted;
+  const valid = !!symbol && sized.ok && !cefiHalted;
 
   const submit = () => {
     if (!symbol || !valid) return;
@@ -120,12 +126,17 @@ export function Ticket() {
       className="h-full"
       title={symbol ? `Ticket · ${symbol}` : "Ticket"}
       actions={
-        <span title={defi ? `CeFi: the exchange's book. DeFi: a market swap of ${defi.symbol} on ${defi.chain ?? "chain"}.` : "This book has no DeFi listing"}>
+        <span
+          title={[
+            halted ? `CeFi: ${symbol} is ${status?.toLowerCase()}, so the exchange takes no orders on it.` : "CeFi: the exchange's book.",
+            defi ? `DeFi: a market swap of ${defi.symbol} on ${defi.chain ?? "chain"}.` : "This book has no DeFi listing.",
+          ].join(" ")}
+        >
           <Segmented<Venue>
             value={venue}
-            onChange={(v) => (v === "DEFI" && !defi ? undefined : setVenue(v))}
+            onChange={(v) => ((v === "DEFI" && !defi) || (v === "CEFI" && halted) ? undefined : setVenue(v))}
             options={[
-              { value: "CEFI", label: "CeFi" },
+              { value: "CEFI", label: <span className={cx(halted && "opacity-40")}>CeFi</span> },
               { value: "DEFI", label: <span className={cx(!defi && "opacity-40")}>DeFi</span> },
             ]}
           />
@@ -185,6 +196,11 @@ export function Ticket() {
             <input type="checkbox" checked={postOnly} disabled={type !== "LIMIT"} onChange={(e) => setPostOnly(e.target.checked)} />
             Post only (ALO)
           </label>
+        )}
+        {cefiHalted && (
+          <p className="text-[11px] leading-snug text-accent">
+            {symbol} is {status?.toLowerCase()} on the exchange, so it takes no CeFi orders{defi ? "; switch to DeFi to trade it" : ""}.
+          </p>
         )}
         {/* Exactly what will be sent, after any USD ↔ quantity conversion. */}
         {sized.describe && <p className={cx("text-[11px] leading-snug", sized.ok ? "text-muted" : "text-accent")}>{sized.describe}</p>}

@@ -218,7 +218,7 @@ export class LiveBackend implements Backend {
     }));
     // Attach each book's DeFi listing, so the ticket can route there.
     const defi = await this.defiListings().catch(() => new Map<string, NonNullable<Instrument["defi"]>>());
-    for (const i of list as Instrument[]) i.defi = defi.get(i.symbol);
+    for (const i of list as Instrument[]) i.defi = defi.get(i.symbol) ?? defi.get(`base:${i.symbol.split("-")[0]}`);
     list.sort((a, b) => Number(b.notional24h ?? 0) - Number(a.notional24h ?? 0));
     this.instrumentCache = { at: Date.now(), list };
     return list;
@@ -514,6 +514,8 @@ export class LiveBackend implements Backend {
   // ---------- DeFi through the gateway ----------
 
   // CeFi instrument symbol → the DeFi listing of the same economic asset, from the public catalog.
+  // A halted CeFi market's catalog entry loses its cefi_instrument, so those are also keyed by the
+  // asset's symbol ("base:SNDKC"); DeFi still trades while the CeFi book is halted.
   private defiListings(): Promise<Map<string, NonNullable<Instrument["defi"]>>> {
     return this.cached("defi-listings", 600_000, async () => {
       const assets = await this.list<{
@@ -532,9 +534,10 @@ export class LiveBackend implements Backend {
       }
       const out = new Map<string, NonNullable<Instrument["defi"]>>();
       for (const a of assets) {
-        if (a.venue !== "cefi" || !a.cefi_instrument || !a.economic_asset_id) continue;
+        if (a.venue !== "cefi" || !a.economic_asset_id) continue;
         const d = defiByEconomic.get(a.economic_asset_id);
-        if (d) out.set(a.cefi_instrument, { assetId: d.id, chain: d.chain, symbol: d.symbol, decimals: d.decimals });
+        if (!d) continue;
+        out.set(a.cefi_instrument ?? `base:${a.symbol}`, { assetId: d.id, chain: d.chain, symbol: d.symbol, decimals: d.decimals });
       }
       return out;
     });

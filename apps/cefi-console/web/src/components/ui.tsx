@@ -10,12 +10,26 @@ export function cx(...parts: (string | false | null | undefined)[]): string {
 // (the Columns button) rather than spending a row on them.
 export const PanelHeaderSlot = createContext<HTMLElement | null>(null);
 
-export function Panel({ title, actions, children, className }: { title: ReactNode; actions?: ReactNode; children: ReactNode; className?: string }) {
+// center sits in the middle of the header, between the title and the actions.
+export function Panel({
+  title,
+  actions,
+  center,
+  children,
+  className,
+}: {
+  title: ReactNode;
+  actions?: ReactNode;
+  center?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
   const [slot, setSlot] = useState<HTMLElement | null>(null);
   return (
     <section className={cx("flex min-h-0 flex-col rounded-md border border-line bg-panel", className)}>
-      <header className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
+      <header className="relative flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
         <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted">{title}</h2>
+        {center && <div className="absolute left-1/2 -translate-x-1/2 whitespace-nowrap">{center}</div>}
         <div className="ml-auto flex items-center gap-1.5">
           {actions}
           <span ref={setSlot} className="flex items-center empty:hidden" />
@@ -99,7 +113,19 @@ export function Segmented<T extends string>({ value, options, onChange }: { valu
   );
 }
 
-export function Modal({ title, onClose, children, footer }: { title: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode }) {
+export function Modal({
+  title,
+  onClose,
+  children,
+  footer,
+  wide,
+}: {
+  title: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+  footer?: ReactNode;
+  wide?: boolean;
+}) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -107,14 +133,19 @@ export function Modal({ title, onClose, children, footer }: { title: ReactNode; 
   }, [onClose]);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onMouseDown={onClose}>
-      <div className="w-full max-w-md rounded-lg border border-line bg-panel shadow-2xl" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+      <div
+        className={cx("flex max-h-full w-full flex-col rounded-lg border border-line bg-panel shadow-2xl", wide ? "max-w-6xl" : "max-w-md")}
+        onMouseDown={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+      >
         <header className="flex items-center border-b border-line px-4 py-3">
           <h3 className="text-sm font-semibold">{title}</h3>
           <button type="button" className="ml-auto text-muted hover:text-ink" onClick={onClose} aria-label="Close">
             <X size={16} />
           </button>
         </header>
-        <div className="space-y-3 px-4 py-4">{children}</div>
+        <div className="min-h-0 space-y-3 overflow-y-auto px-4 py-4">{children}</div>
         {footer && <footer className="flex justify-end gap-2 border-t border-line px-4 py-3">{footer}</footer>}
       </div>
     </div>
@@ -137,6 +168,23 @@ export const inputClass =
   "num h-8 w-full rounded border border-line bg-raised px-2 text-ink outline-none placeholder:text-faint focus:border-info";
 
 export const selectClass = "h-7 rounded border border-line bg-raised px-1.5 text-xs text-ink outline-none focus:border-info";
+
+// A symbol or asset that loads its book when clicked. The click stays on the symbol, not the row.
+export function SymbolLink({ onOpen, title, className, children }: { onOpen: () => void; title?: string; className?: string; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      className={cx("cursor-pointer text-left hover:text-info hover:underline", className)}
+      title={title}
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen();
+      }}
+    >
+      {children}
+    </button>
+  );
+}
 
 export function Empty({ children }: { children: ReactNode }) {
   return <div className="flex h-full min-h-20 items-center justify-center px-4 text-center text-xs text-faint">{children}</div>;
