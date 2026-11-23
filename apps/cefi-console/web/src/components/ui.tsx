@@ -169,6 +169,23 @@ export const inputClass =
 
 export const selectClass = "h-7 rounded border border-line bg-raised px-1.5 text-xs text-ink outline-none focus:border-info";
 
+// A symbol or asset that loads its book when clicked. The click stays on the symbol, not the row.
+export function SymbolLink({ onOpen, title, className, children }: { onOpen: () => void; title?: string; className?: string; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      className={cx("cursor-pointer text-left hover:text-info hover:underline", className)}
+      title={title}
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen();
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
 export function Empty({ children }: { children: ReactNode }) {
   return <div className="flex h-full min-h-20 items-center justify-center px-4 text-center text-xs text-faint">{children}</div>;
 }

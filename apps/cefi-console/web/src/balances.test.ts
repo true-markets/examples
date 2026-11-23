@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Balances } from "../../shared/api.ts";
-import { custodyAmount, toRows } from "./balances.ts";
+import { bookFor, custodyAmount, toRows } from "./balances.ts";
 
 const wallet = (symbol: string, chain: string, total: string, allocated: string) => ({
   assetId: `${symbol}-${chain}`,
@@ -63,5 +63,14 @@ describe("custodyAmount", () => {
     expect(custodyAmount({ ...base, unit: "QTY", input: "0.123456789" }).ok).toBe(false);
     expect(custodyAmount({ ...base, unit: "USD", input: "10", price: null }).ok).toBe(false);
     expect(custodyAmount({ ...base, unit: "QTY", input: ".5" })).toMatchObject({ ok: true, qty: "0.5" });
+  });
+});
+
+describe("bookFor", () => {
+  it("opens the asset's USDC book, any book with it as the base otherwise, and none for a quote-only asset", () => {
+    const symbols = ["TSLA-USD", "TSLA-USDC", "BTC-USD", "MUC-USDC"];
+    expect(bookFor("TSLA", symbols)).toBe("TSLA-USDC");
+    expect(bookFor("BTC", symbols)).toBe("BTC-USD");
+    expect(bookFor("USDC", symbols)).toBeUndefined();
   });
 });

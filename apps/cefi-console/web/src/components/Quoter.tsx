@@ -1,5 +1,5 @@
 import { ChartColumn, ChevronDown, ChevronUp, CircleAlert, CircleHelp, Play, Plus, RotateCcw, SlidersHorizontal, Square, Trash2 } from "lucide-react";
-import { createContext, Fragment, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, Fragment, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Panel as Pane } from "react-resizable-panels";
 import { Divider, pane, Split } from "./Layout.tsx";
 import type {
@@ -35,7 +35,7 @@ import { useUi } from "../ui-state.tsx";
 import { BulkParams } from "./BulkParams.tsx";
 import { Stack } from "./Balances.tsx";
 import { ago, price as fmtPrice, qty as fmtQty, quoteUnit, usd as fmtUsd } from "../format.ts";
-import { Button, cx, Empty, inputClass, Modal, Panel, StatusBadge } from "./ui.tsx";
+import { Button, cx, Empty, inputClass, Modal, Panel, StatusBadge, SymbolLink } from "./ui.tsx";
 
 // The management screen for a running cefi-quoter (apps/cefi-quoter). One quoter runs every book,
 // all drawing on one shared view of the account's balances. Everything here comes from the
@@ -59,11 +59,15 @@ export function QuoterScreen() {
   // The shared instrument if it's a book; else the last book picked here, or the first one.
   const selected = has(shared) ? shared : has(picked) ? picked : books[0]?.market.symbol;
   // Picking a book shows it, closing any breakdown.
-  const select = (s: string) => {
-    setPicked(s);
-    setSymbol(s);
-    setOpen("none");
-  };
+  // Stable, so tables that open a book from a cell don't rebuild their columns every render.
+  const select = useCallback(
+    (s: string) => {
+      setPicked(s);
+      setSymbol(s);
+      setOpen("none");
+    },
+    [setSymbol, setOpen],
+  );
   // On this screen the header's buttons follow the book shown, so an instrument without a book
   // gives way to the one that is.
   useEffect(() => {
@@ -108,7 +112,7 @@ export function QuoterScreen() {
                 <Divider vertical />
                 <Pane id="quoter-balances" defaultSize="45" minSize={100}>
                   <div className={pane}>
-                    <SharedBalancesPanel d={desk} />
+                    <SharedBalancesPanel d={desk} onOpen={select} />
                   </div>
                 </Pane>
               </Split>
@@ -120,7 +124,7 @@ export function QuoterScreen() {
                 <ActivityBar d={desk} open={shownOpen === "edge"} onToggle={(o) => setOpen(o ? "edge" : "none")} />
                 {shownOpen === "edge" && (
                   <div className="min-h-0 flex-1">
-                    <TradesView />
+                    <TradesView onOpen={select} />
                   </div>
                 )}
                 {shownOpen === "params" && (
@@ -197,14 +201,17 @@ function useStoredChoice<T extends string>(key: string, fallback: T, allowed: re
       return fallback;
     }
   });
-  const set = (next: T) => {
-    setV(next);
-    try {
-      localStorage.setItem(key, next);
-    } catch {
-      // not remembered
-    }
-  };
+  const set = useCallback(
+    (next: T) => {
+      setV(next);
+      try {
+        localStorage.setItem(key, next);
+      } catch {
+        // not remembered
+      }
+    },
+    [key],
+  );
   return [v, set];
 }
 
@@ -452,6 +459,7 @@ function AddBook({ d, onAdded }: { d: QuoterDeskStatus; onAdded: (s: string) => 
 interface LedgerRow {
   assetId: string;
   symbol: string;
+  book?: string; // the book with this asset as its base
   price: number | null;
   qty: Record<LedgerCol, number>;
   usd: Record<LedgerCol, number | null>;
@@ -477,7 +485,8 @@ const ledgerCols: { id: LedgerCol; field: "spendable" | "ourHold" | "foreignHold
 
 const ledgerHelper = createColumnHelper<LedgerRow>();
 
-function SharedBalancesPanel({ d }: { d: QuoterDeskStatus }) {
+// onOpen shows a book: an asset that's some book's base opens it.
+function SharedBalancesPanel({ d, onOpen }: { d: QuoterDeskStatus; onOpen: (symbol: string) => void }) {
   const [filters, setFilters] = useState<ColumnFiltersState>([]);
   const rows = useMemo<LedgerRow[]>(
     () =>
@@ -489,9 +498,10 @@ function SharedBalancesPanel({ d }: { d: QuoterDeskStatus }) {
           qty[c.id] = Number(a[c.field]);
           usd[c.id] = price === null ? null : qty[c.id] * price;
         }
-        return { assetId: a.assetId, symbol: a.symbol || a.assetId, price, qty, usd };
+        const book = d.books.find((b) => b.market.baseAssetId === a.assetId)?.market.symbol;
+        return { assetId: a.assetId, symbol: a.symbol || a.assetId, book, price, qty, usd };
       }),
-    [d.balances],
+    [d.balances, d.books],
   );
   // Other orders only shows when something else on the account is holding funds.
   const showOther = rows.some((r) => r.qty.other !== 0);
@@ -502,12 +512,21 @@ function SharedBalancesPanel({ d }: { d: QuoterDeskStatus }) {
         header: "Asset",
         size: 72,
         meta: { label: "Asset", filter: { kind: "multi" } } satisfies ColMeta,
-        cell: (c) => (
-          <div className="leading-tight">
-            <div className="font-semibold text-ink">{c.getValue()}</div>
-            <div className="num text-[10px] text-faint">{c.row.original.price !== null ? `$${fmtPrice(c.row.original.price)}` : "no book prices it"}</div>
-          </div>
-        ),
+        cell: (c) => {
+          const book = c.row.original.book;
+          return (
+            <div className="leading-tight">
+              {book ? (
+                <SymbolLink className="font-semibold text-ink" onOpen={() => onOpen(book)} title={`Open ${book}`}>
+                  {c.getValue()}
+                </SymbolLink>
+              ) : (
+                <div className="font-semibold text-ink">{c.getValue()}</div>
+              )}
+              <div className="num text-[10px] text-faint">{c.row.original.price !== null ? `$${fmtPrice(c.row.original.price)}` : "no book prices it"}</div>
+            </div>
+          );
+        },
       }),
       ...ledgerCols
         .filter((col) => col.id !== "other" || showOther)
@@ -539,7 +558,7 @@ function SharedBalancesPanel({ d }: { d: QuoterDeskStatus }) {
           }),
         ),
     ],
-    [showOther],
+    [showOther, onOpen],
   );
   const facets = useMemo(() => ({ symbol: rows.map((r) => ({ value: r.symbol, count: 1 })) }), [rows]);
   const total = (k: LedgerCol) => rows.reduce((s, r) => s + (r.usd[k] ?? 0), 0);
@@ -1789,7 +1808,7 @@ const summaryHelper = createColumnHelper<QuoterTradeSummary>();
 const nullsLast = (id: string) => (a: { getValue: <V>(id: string) => V }, b: { getValue: <V>(id: string) => V }) =>
   (a.getValue<number | null>(id) ?? -Infinity) - (b.getValue<number | null>(id) ?? -Infinity);
 
-function TradesView() {
+function TradesView({ onOpen }: { onOpen: (symbol: string) => void }) {
   const { data: session } = useSession();
   const q = useQuoterTrades(!!session?.quoter);
   const r = q.data;
@@ -1798,14 +1817,14 @@ function TradesView() {
     <Split id="quoter-trades" orientation="vertical">
       <Pane id="quoter-trades-summary" defaultSize="32" minSize={120}>
         <div className={pane}>
-          <SummaryTable byBook={r.byBook} total={r.total} hz={r.horizonsSecs} />
+          <SummaryTable byBook={r.byBook} total={r.total} hz={r.horizonsSecs} onOpen={onOpen} />
         </div>
       </Pane>
       <Divider vertical />
       <Pane id="quoter-trades-list" defaultSize="68" minSize={160}>
         <div className={pane}>
           <Panel title={`Trades · all books (${r.total.trades})`} className="h-full">
-            <TradesTable id="quoter-trades" trades={r.trades} hz={r.horizonsSecs} />
+            <TradesTable id="quoter-trades" trades={r.trades} hz={r.horizonsSecs} onOpen={onOpen} />
           </Panel>
         </div>
       </Pane>
@@ -1813,7 +1832,17 @@ function TradesView() {
   );
 }
 
-function SummaryTable({ byBook, total, hz }: { byBook: QuoterTradeSummary[]; total: QuoterTradeSummary; hz: number[] }) {
+function SummaryTable({
+  byBook,
+  total,
+  hz,
+  onOpen,
+}: {
+  byBook: QuoterTradeSummary[];
+  total: QuoterTradeSummary;
+  hz: number[];
+  onOpen: (symbol: string) => void;
+}) {
   const [filters, setFilters] = useState<ColumnFiltersState>([]);
   const lastH = hz[hz.length - 1];
   const columns = useMemo(
@@ -1823,7 +1852,11 @@ function SummaryTable({ byBook, total, hz }: { byBook: QuoterTradeSummary[]; tot
         header: "Book",
         size: 120,
         meta: { label: "Book", filter: { kind: "multi" } } satisfies ColMeta,
-        cell: (c) => <span className="font-medium">{c.getValue()}</span>,
+        cell: (c) => (
+          <SymbolLink className="font-medium" onOpen={() => onOpen(c.getValue())} title={`Open ${c.getValue()}`}>
+            {c.getValue()}
+          </SymbolLink>
+        ),
       }),
       summaryHelper.accessor("trades", {
         id: "trades",
@@ -1902,7 +1935,7 @@ function SummaryTable({ byBook, total, hz }: { byBook: QuoterTradeSummary[]; tot
         },
       }),
     ],
-    [hz, lastH],
+    [hz, lastH, onOpen],
   );
   const facets = useMemo(() => ({ symbol: byBook.map((b) => ({ value: b.symbol, count: b.trades })) }), [byBook]);
   const totalPnl = total.markedPnl[total.markedPnl.length - 1];
@@ -1954,7 +1987,8 @@ function SummaryTable({ byBook, total, hz }: { byBook: QuoterTradeSummary[]; tot
   );
 }
 
-function TradesTable({ id, trades, hz }: { id: string; trades: QuoterTrade[]; hz: number[] }) {
+// onOpen, where given, makes each trade's book open that book.
+function TradesTable({ id, trades, hz, onOpen }: { id: string; trades: QuoterTrade[]; hz: number[]; onOpen?: (symbol: string) => void }) {
   const [filters, setFilters] = useState<ColumnFiltersState>([]);
   const rows = useMemo<TradeRow[]>(
     () =>
@@ -1994,7 +2028,14 @@ function TradesTable({ id, trades, hz }: { id: string; trades: QuoterTrade[]; hz
         header: "Book",
         size: 116,
         meta: { label: "Book", filter: { kind: "multi" } } satisfies ColMeta,
-        cell: (c) => <span className="font-medium">{c.getValue()}</span>,
+        cell: (c) =>
+          onOpen ? (
+            <SymbolLink className="font-medium" onOpen={() => onOpen(c.getValue())} title={`Open ${c.getValue()}`}>
+              {c.getValue()}
+            </SymbolLink>
+          ) : (
+            <span className="font-medium">{c.getValue()}</span>
+          ),
       }),
       tradeHelper.accessor("side", {
         id: "side",
@@ -2091,7 +2132,7 @@ function TradesTable({ id, trades, hz }: { id: string; trades: QuoterTrade[]; hz
         cell: (c) => pct(c.getValue()),
       }),
     ],
-    [hz],
+    [hz, onOpen],
   );
   const facets = useMemo(() => {
     const count = (f: (r: TradeRow) => string) => {
