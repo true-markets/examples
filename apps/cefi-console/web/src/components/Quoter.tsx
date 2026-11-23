@@ -105,7 +105,7 @@ export function QuoterScreen() {
     <ShowHelp.Provider value={help}>
       <ShowUnits.Provider value={units}>
         <div className="flex h-full min-h-0 flex-col gap-2">
-          <DeskBar d={desk} stale={!!status.error} help={help} onHelp={setHelp} units={units} onUnits={setUnits} />
+          <DeskBar d={desk} stale={!!status.error} help={help} onHelp={setHelp} />
           <Warnings list={desk.warnings} />
           <div className="min-h-0 flex-1">
             <Split id="quoter" orientation="horizontal">
@@ -127,7 +127,7 @@ export function QuoterScreen() {
               <Divider />
               <Pane id="quoter-book" defaultSize="72" minSize="40">
                 <div className={cx(pane, "flex flex-col gap-2")}>
-                  <AllBooksBar d={desk} open={shownOpen === "params"} onToggle={(o) => setOpen(o ? "params" : "none")} />
+                  <AllBooksBar d={desk} open={shownOpen === "params"} onToggle={(o) => setOpen(o ? "params" : "none")} onUnits={setUnits} />
                   <ActivityBar d={desk} open={shownOpen === "edge"} onToggle={(o) => setOpen(o ? "edge" : "none")} />
                   {shownOpen === "edge" && (
                     <div className="min-h-0 flex-1">
@@ -233,7 +233,7 @@ function Help({ children }: { children: ReactNode }) {
 // ---------- bps or dollars ----------
 
 // Distances from fair value (edge, mark-outs, how far a quote sits from the mid, the spread) read
-// in bps or in dollars, by the switch in the Quoter bar. Kept per browser. Parameters stay in bps.
+// in bps or in dollars, by the switch in the All books bar. Kept per browser. Parameters stay in bps.
 type Units = "bps" | "usd";
 const ShowUnits = createContext<Units>("bps");
 const useUnits = () => useContext(ShowUnits);
@@ -257,7 +257,7 @@ function UnitsSwitch({ units, onUnits }: { units: Units; onUnits: (u: Units) => 
     <span
       role="radiogroup"
       title="Show edge, mark-outs and distances from the mid in bps or dollars"
-      className="inline-flex rounded border border-line text-[11px]"
+      className="inline-flex shrink-0 rounded border border-line text-[11px]"
     >
       {(
         [
@@ -299,21 +299,7 @@ function StateBadge({ state }: { state: QuoterStatus["state"] }) {
 
 // ---------- the whole quoter ----------
 
-function DeskBar({
-  d,
-  stale,
-  help,
-  onHelp,
-  units,
-  onUnits,
-}: {
-  d: QuoterDeskStatus;
-  stale: boolean;
-  help: boolean;
-  onHelp: (on: boolean) => void;
-  units: Units;
-  onUnits: (u: Units) => void;
-}) {
+function DeskBar({ d, stale, help, onHelp }: { d: QuoterDeskStatus; stale: boolean; help: boolean; onHelp: (on: boolean) => void }) {
   const control = useQuoterControl();
   const [confirm, setConfirm] = useState(false);
   const live = d.environment === "production";
@@ -363,7 +349,6 @@ function DeskBar({
       >
         <CircleHelp size={12} className={help ? "text-info" : undefined} /> Help {help ? "on" : "off"}
       </Button>
-      <UnitsSwitch units={units} onUnits={onUnits} />
       {stale && <span className="text-[11px] text-sell">· lost contact with the quoter, showing the last status</span>}
       <div className="ml-auto flex items-center gap-3">
         <span className="num text-xs">
@@ -1207,7 +1192,7 @@ function LadderPanel({ s }: { s: QuoterStatus }) {
             Target is where the strategy wants each order this cycle; Bid and Ask are where the orders rest, with an arrow while a modify is in flight. An order
             only moves once its target is at least the modify threshold away ({s.params.modifyThresholdBps} bps). Size is what is still resting, in{" "}
             {s.market.baseSymbol}, with its value in USD under it. Under each price is its distance from the reference mid, in bps or dollars by the switch in
-            the Quoter bar.
+            the All books bar.
           </p>
         </Help>
       </div>
@@ -1592,7 +1577,7 @@ function OpenButton({
 }
 
 // Results across every book; opens every book's edge and every trade.
-function AllBooksBar({ d, open, onToggle }: { d: QuoterDeskStatus; open: boolean; onToggle: (open: boolean) => void }) {
+function AllBooksBar({ d, open, onToggle, onUnits }: { d: QuoterDeskStatus; open: boolean; onToggle: (open: boolean) => void; onUnits: (u: Units) => void }) {
   const units = useUnits();
   if (!d.books.length) return null;
   const t = d.trades;
@@ -1600,13 +1585,16 @@ function AllBooksBar({ d, open, onToggle }: { d: QuoterDeskStatus; open: boolean
     <SummaryBar
       name="All books"
       button={
-        <OpenButton
-          open={open}
-          onToggle={onToggle}
-          icon={<SlidersHorizontal size={12} />}
-          label="Parameters"
-          title={open ? "Close the all-books parameter editor" : "Edit parameters across every book"}
-        />
+        <>
+          <UnitsSwitch units={units} onUnits={onUnits} />
+          <OpenButton
+            open={open}
+            onToggle={onToggle}
+            icon={<SlidersHorizontal size={12} />}
+            label="Parameters"
+            title={open ? "Close the all-books parameter editor" : "Edit parameters across every book"}
+          />
+        </>
       }
     >
       {d.totals.map((x) => {
