@@ -103,7 +103,7 @@ func loadConfig() (Config, error) {
 		AutoStart:       getBool("QUOTER_AUTOSTART", false),
 		IDPrefix:        get("QUOTER_ID_PREFIX", "cq"),
 		Transport:       get("ORDER_TRANSPORT", "rest"),
-		OrderRate:       getInt("ORDER_RATE_LIMIT", 20),
+		OrderRate:       getInt("ORDER_RATE_LIMIT", 90),
 		OrderRatePerMin: getInt("ORDER_RATE_LIMIT_PER_MIN", 1800),
 		AdminAddr:       get("ADMIN_ADDR", "127.0.0.1:4860"),
 		AdminToken:      get("ADMIN_TOKEN", ""),
