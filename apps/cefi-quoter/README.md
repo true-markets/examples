@@ -199,6 +199,8 @@ A multiplier that should be set but isn't shows up as a source sitting a fixed r
 
 The **reference guard** (`REF_GUARD_BPS`, 500 by default) catches what the sources can't: the book you're quoting into trading far through the blend. That covers a bid well above it or an ask well below, as when your token takes a split or multiplier your sources haven't. Someone crossing that far is more likely right about the price than handing out money, so the book stops quoting until the gap closes or you fix the reference.
 
+The exchange runs a check of its own: it refuses orders more than a set percentage (5% today) from its own reference price for the book, with "Order outside book price bands". When your reference and the exchange's disagree by more than that, as when a stock gaps pre-market and the exchange's price hasn't caught up, every order on one side is refused and the quoter keeps sending them. Set the **band reject limit** (`BAND_REJECT_LIMIT`) to stop the book after that many band rejects within a minute; it pulls the book's quotes and stays stopped until you start it again.
+
 #### Setting one up
 
 On the Quoter screen, **Add…** opens the reference editor, filled with the suggested sources. **Edit…** on a book's Reference sources card opens the same editor. It previews every change against live prices before anything is saved, showing:
@@ -274,6 +276,7 @@ Everything goes in `.env`; [.env.example](.env.example) lists all of it with com
 | `MAX_BASE_ALLOC` | 0 | Most of the base asset this book's asks may hold, in `SIZE_UNIT`; 0 means any free balance |
 | `REF_STALE_MS` | 3000 | Leave a reference source out after this long silent; pull quotes when every source is |
 | `REF_GUARD_BPS` | 500 | **Reference guard**: stop quoting while other people's orders on the book sit this far past the reference (a bid this far above it, an ask this far below). 0 turns it off |
+| `BAND_REJECT_LIMIT` | 0 | **Band reject limit**: stop the book and pull its quotes after this many orders are rejected for the exchange's price band within a minute. 0 turns it off |
 | `MIN_REQUOTE_MS` | 100 | Smallest gap between rounds of order changes |
 | `PROFIT_TAKER` | true | Cross to close inventory when the book pays at least the (scaled) take edge, never below cost |
 | `TAKEOUT` | false | Cross to build inventory when the book sits at least `TAKE_EDGE_BPS` past fair value |

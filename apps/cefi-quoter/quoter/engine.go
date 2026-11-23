@@ -104,6 +104,7 @@ type Engine struct {
 	orphans     []string
 	lastLadder  Ladder
 	lastHalt    string
+	bandRejects []time.Time // price-band rejects in the last minute, for the band reject limit
 }
 
 type ConnState struct {
@@ -247,6 +248,7 @@ func (e *Engine) OnDropCopy(d tm.DropCopy) {
 			e.rateLimitedLocked(res.Reject)
 		} else {
 			e.eventLocked("reject", fmt.Sprintf("%s %s rejected: %s", res.Side, levelName(res.Level), res.Reject))
+			e.bandRejectLocked(res.Reject)
 		}
 	}
 	if res.Orphan != "" {
@@ -268,6 +270,7 @@ func (e *Engine) OnCancelReject(clOrdID, _ string, responseTo, text string) {
 		e.rateLimitedLocked(text)
 	} else {
 		e.eventLocked("warn", "FIX cancel/replace rejected: "+text)
+		e.bandRejectLocked(text)
 	}
 	e.mu.Unlock()
 }
@@ -350,6 +353,7 @@ func (e *Engine) SetEnabled(on bool) {
 	if e.enabled != on {
 		e.enabled = on
 		if on {
+			e.bandRejects = nil // a fresh start gets a fresh count
 			e.eventLocked("info", "quoting started")
 		} else {
 			e.eventLocked("info", "quoting stopped; pulling quotes")
@@ -668,6 +672,7 @@ func (e *Engine) after(s Step, externalID string, err error) {
 		what += fmt.Sprintf(" %s @ %s", s.Qty, s.Price)
 	}
 	e.eventLocked("warn", fmt.Sprintf("%s: %v", what, err))
+	e.bandRejectLocked(err.Error())
 	e.log.Warn("request failed", "kind", s.Kind, "side", s.Side, "level", s.Level, "price", s.Price, "qty", s.Qty, "external_id", externalID, "err", err)
 }
 
@@ -848,6 +853,39 @@ func levelName(level int) string {
 }
 
 func cooldownKey(side Side, level int) string { return fmt.Sprintf("%s:%d", side, level) }
+
+// bandRejectLocked counts a reject for the exchange's price band ("Order outside book price
+// bands") and stops the book when the band reject limit is reached within a minute. The band is
+// centered on the exchange's own reference price, so a run of them means that and the quoter's
+// reference disagree: the quoter would keep sending orders the exchange refuses, and whichever
+// price is wrong, quoting on one side only isn't market making. Stopping pulls every quote and
+// stays stopped until someone starts the book again.
+func (e *Engine) bandRejectLocked(text string) {
+	limit := e.params.BandRejectLimit
+	if !isBandReject(text) || limit <= 0 || !e.enabled {
+		return
+	}
+	now := time.Now()
+	kept := e.bandRejects[:0]
+	for _, t := range e.bandRejects {
+		if now.Sub(t) < bandRejectWindow {
+			kept = append(kept, t)
+		}
+	}
+	e.bandRejects = append(kept, now)
+	if len(e.bandRejects) < limit {
+		return
+	}
+	e.bandRejects = nil
+	e.enabled = false
+	e.eventLocked("warn", fmt.Sprintf("stopped: %d orders rejected for the exchange's price band within a minute; the exchange's reference price and this book's reference disagree. Check both, then start the book again", limit))
+}
+
+const bandRejectWindow = time.Minute
+
+func isBandReject(text string) bool {
+	return strings.Contains(strings.ToLower(text), "price band")
+}
 
 func isBalanceReject(text string) bool {
 	t := strings.ToLower(text)

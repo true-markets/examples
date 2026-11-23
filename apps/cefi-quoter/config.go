@@ -122,6 +122,7 @@ func loadConfig() (Config, error) {
 			MaxBaseAlloc:        getDec("MAX_BASE_ALLOC", "0"),
 			RefStaleMs:          getInt("REF_STALE_MS", 3000),
 			MaxRefGapBps:        getFloat("REF_GUARD_BPS", 500),
+			BandRejectLimit:     getInt("BAND_REJECT_LIMIT", 0),
 			MinRequoteMs:        getInt("MIN_REQUOTE_MS", 100),
 			ProfitTaker:         getBool("PROFIT_TAKER", true),
 			Takeout:             getBool("TAKEOUT", false),
