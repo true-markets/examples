@@ -20,6 +20,11 @@ export class QuoterClient {
     return this.call("GET", `/api/trades?limit=${Math.max(1, Math.min(5000, Math.floor(limit)))}`);
   }
 
+  // Rejects and failed requests across every book, newest first.
+  rejects(limit = 1000): Promise<unknown> {
+    return this.call("GET", `/api/rejects?limit=${Math.max(1, Math.min(5000, Math.floor(limit)))}`);
+  }
+
   book(symbol: string): Promise<unknown> {
     return this.call("GET", `/api/books/${encodeURIComponent(symbol)}`);
   }

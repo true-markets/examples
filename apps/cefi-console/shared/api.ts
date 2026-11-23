@@ -457,6 +457,19 @@ export interface QuoterTradeSummary {
   horizonsSecs: number[];
 }
 
+// A request the exchange refused, or that failed to send.
+export interface QuoterReject {
+  time: string;
+  book: string;
+  request?: "create" | "modify" | "cancel";
+  side?: "BUY" | "SELL";
+  level?: string; // L0, L1, ... or take
+  price?: string;
+  qty?: string;
+  reason: string;
+  via: string; // drop copy, FIX cancel reject, or send
+}
+
 export interface QuoterTradesReport {
   trades: QuoterTrade[];
   total: QuoterTradeSummary;

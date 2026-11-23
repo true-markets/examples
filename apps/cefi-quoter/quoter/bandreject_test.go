@@ -40,3 +40,19 @@ func TestBandRejectLimitStopsTheBook(t *testing.T) {
 		t.Fatal("a limit of 0 stopped the book")
 	}
 }
+
+func TestRejectLogKeepsTheLatestNewestFirst(t *testing.T) {
+	e := &Engine{market: Market{Symbol: "NVDA-USDC"}, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	for i := range maxRejects + 5 {
+		e.rejectLocked(Reject{Request: Create, Side: Buy, Level: "L0", Price: "1", Qty: "1", Reason: "Order outside book price bands", Via: "drop copy"})
+		e.rejects[len(e.rejects)-1].Time = time.Unix(int64(i), 0)
+	}
+	got := e.Rejects()
+	if len(got) != maxRejects || got[0].Time.Unix() != maxRejects+4 || got[0].Book != "NVDA-USDC" {
+		t.Fatalf("kept %d, newest at %d, book %q", len(got), got[0].Time.Unix(), got[0].Book)
+	}
+	e.ResetRejects()
+	if len(e.Rejects()) != 0 {
+		t.Fatal("reset left rejects in the log")
+	}
+}

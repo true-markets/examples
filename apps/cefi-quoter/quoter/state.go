@@ -130,6 +130,7 @@ func (e *Engine) ResetPosition() {
 func (e *Engine) ResetRejects() {
 	e.mu.Lock()
 	e.stats.Rejects, e.stats.Errors, e.stats.RateLimited, e.stats.RateLimitPauses = 0, 0, 0, 0
+	e.rejects = nil
 	e.eventLocked("info", "reject, error and rate-limit counts reset")
 	e.mu.Unlock()
 }

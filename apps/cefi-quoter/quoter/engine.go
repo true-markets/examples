@@ -105,7 +105,24 @@ type Engine struct {
 	lastLadder  Ladder
 	lastHalt    string
 	bandRejects []time.Time // price-band rejects in the last minute, for the band reject limit
+	rejects     []Reject    // the latest rejects and failed requests, oldest first
 }
+
+// Reject is one request the exchange refused (or that failed to send), kept so the screen can
+// show where rejects come from.
+type Reject struct {
+	Time    time.Time `json:"time"`
+	Book    string    `json:"book"`
+	Request Action    `json:"request,omitempty"` // create, modify or cancel; empty when unknown
+	Side    Side      `json:"side,omitempty"`
+	Level   string    `json:"level,omitempty"` // L0, L1, ... or take
+	Price   string    `json:"price,omitempty"`
+	Qty     string    `json:"qty,omitempty"`
+	Reason  string    `json:"reason"`
+	Via     string    `json:"via"` // drop copy, FIX cancel reject, or send (the request itself failed)
+}
+
+const maxRejects = 500
 
 type ConnState struct {
 	Up     bool      `json:"up"`
@@ -240,6 +257,11 @@ func (e *Engine) OnDropCopy(d tm.DropCopy) {
 	})
 	if res.Reject != "" {
 		e.stats.Rejects++
+		r := Reject{Request: res.Request, Side: res.Side, Level: levelName(res.Level), Reason: res.Reject, Via: "drop copy"}
+		if res.Price.IsPositive() {
+			r.Price, r.Qty = res.Price.String(), res.Qty.String()
+		}
+		e.rejectLocked(r)
 		e.cooldown[cooldownKey(res.Side, res.Level)] = time.Now().Add(rejectCooldown)
 		if isBalanceReject(res.Reject) {
 			e.ledger.MarkDirty()
@@ -264,8 +286,22 @@ func (e *Engine) OnCancelReject(clOrdID, _ string, responseTo, text string) {
 	if !e.book.Knows(clOrdID) {
 		return
 	}
+	r := Reject{Request: Cancel, Reason: text, Via: "FIX cancel reject"}
+	if responseTo == "2" {
+		r.Request = Modify
+	}
+	if o, ok := e.book.ByClOrdID(clOrdID); ok {
+		r.Side, r.Level = o.Side, levelName(o.Level)
+		if r.Request == Modify && o.PendingPrice != nil {
+			r.Price = o.PendingPrice.String()
+			if o.PendingQty != nil {
+				r.Qty = o.PendingQty.String()
+			}
+		}
+	}
 	e.book.CancelRejected(clOrdID, responseTo)
 	e.mu.Lock()
+	e.rejectLocked(r)
 	if isRateLimitReject(text) {
 		e.rateLimitedLocked(text)
 	} else {
@@ -648,6 +684,11 @@ func (e *Engine) after(s Step, externalID string, err error) {
 		return
 	}
 	e.stats.Errors++
+	r := Reject{Request: s.Kind, Side: s.Side, Level: levelName(s.Level), Reason: err.Error(), Via: "send"}
+	if s.Kind != Cancel {
+		r.Price, r.Qty = s.Price.String(), s.Qty.String()
+	}
+	e.rejectLocked(r)
 	if isRateLimitErr(err) {
 		e.book.SendFailed(externalID, s.Kind)
 		e.rateLimitedLocked(err.Error())
@@ -853,6 +894,26 @@ func levelName(level int) string {
 }
 
 func cooldownKey(side Side, level int) string { return fmt.Sprintf("%s:%d", side, level) }
+
+// rejectLocked keeps a reject for the screen.
+func (e *Engine) rejectLocked(r Reject) {
+	r.Time, r.Book = time.Now(), e.market.Symbol
+	e.rejects = append(e.rejects, r)
+	if len(e.rejects) > maxRejects {
+		e.rejects = e.rejects[len(e.rejects)-maxRejects:]
+	}
+}
+
+// Rejects returns the book's kept rejects, newest first.
+func (e *Engine) Rejects() []Reject {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make([]Reject, len(e.rejects))
+	for i, r := range e.rejects {
+		out[len(out)-1-i] = r
+	}
+	return out
+}
 
 // bandRejectLocked counts a reject for the exchange's price band ("Order outside book price
 // bands") and stops the book when the band reject limit is reached within a minute. The band is

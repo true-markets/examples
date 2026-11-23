@@ -4,6 +4,7 @@ import { Panel as Pane } from "react-resizable-panels";
 import { Divider, pane, Split } from "./Layout.tsx";
 import type {
   QuoterBookSummary,
+  QuoterReject,
   QuoterDeskStatus,
   QuoterTakeSide,
   QuoterTrade,
@@ -16,6 +17,7 @@ import type {
 } from "../../../shared/api.ts";
 import {
   useAddQuoterBook,
+  useQuoterRejects,
   useQuoterTrades,
   useQuoterBook,
   useQuoterControl,
@@ -395,6 +397,11 @@ function BookRow({ b, active, onSelect }: { b: QuoterBookSummary; active: boolea
           {b.market.baseSymbol}
           <BudgetUse held={b.heldBase} budget={b.budgetBase} />
         </span>
+        {b.stats.rejects > 0 && (
+          <span className="ml-auto text-sell" title="Rejects since the book started or its counts were last reset. Trades › Rejects shows each one">
+            {b.stats.rejects} rejects
+          </span>
+        )}
       </div>
       {b.reason && b.state === "waiting" && <div className="mt-0.5 truncate text-[11px] text-accent">{b.reason}</div>}
     </button>
@@ -1808,7 +1815,10 @@ const nullsLast = (id: string) => (a: { getValue: <V>(id: string) => V }, b: { g
 function TradesView({ onOpen }: { onOpen: (symbol: string) => void }) {
   const { data: session } = useSession();
   const q = useQuoterTrades(!!session?.quoter);
+  const rq = useQuoterRejects(!!session?.quoter);
+  const [tab, setTab] = useStoredChoice<"trades" | "rejects">("cefi-console:quoter-trades-tab", "trades", ["trades", "rejects"]);
   const r = q.data;
+  const rejects = rq.data?.rejects ?? [];
   if (!r) return <Empty>{q.error ? q.error.message : "Loading trades…"}</Empty>;
   return (
     <Split id="quoter-trades" orientation="vertical">
@@ -1820,8 +1830,39 @@ function TradesView({ onOpen }: { onOpen: (symbol: string) => void }) {
       <Divider vertical />
       <Pane id="quoter-trades-list" defaultSize="68" minSize={160}>
         <div className={pane}>
-          <Panel title={`Trades · all books (${r.total.trades})`} className="h-full">
-            <TradesTable id="quoter-trades" trades={r.trades} hz={r.horizonsSecs} onOpen={onOpen} />
+          <Panel
+            title={
+              <span role="tablist" className="-ml-1.5 flex items-center gap-0.5">
+                {(
+                  [
+                    ["trades", `Trades · all books (${r.total.trades})`],
+                    ["rejects", `Rejects (${rejects.length})`],
+                  ] as const
+                ).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === key}
+                    onClick={() => setTab(key)}
+                    className={cx(
+                      "rounded px-1.5 py-0.5 uppercase tracking-wider",
+                      tab === key ? "bg-raised text-ink" : "text-faint hover:text-ink",
+                      key === "rejects" && rejects.length > 0 && tab !== key && "text-sell",
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </span>
+            }
+            className="h-full"
+          >
+            {tab === "trades" ? (
+              <TradesTable id="quoter-trades" trades={r.trades} hz={r.horizonsSecs} onOpen={onOpen} />
+            ) : (
+              <RejectsTable rejects={rejects} onOpen={onOpen} error={rq.error?.message} />
+            )}
           </Panel>
         </div>
       </Pane>
@@ -2152,6 +2193,153 @@ function TradesTable({ id, trades, hz, onOpen }: { id: string; trades: QuoterTra
       onFiltersChange={setFilters}
       facets={facets}
       empty="No fills yet this run"
+    />
+  );
+}
+
+interface RejectRow {
+  id: string;
+  timeMs: number;
+  book: string;
+  request: string;
+  side: string;
+  level: string;
+  price: number | null;
+  qty: number | null;
+  reason: string;
+  via: string;
+}
+
+const rejectHelper = createColumnHelper<RejectRow>();
+
+// Every book's latest rejects and failed requests (the quoter keeps the last 500 per book), so a
+// run of them can be traced to a book, a side, a level and the exchange's reason.
+function RejectsTable({ rejects, onOpen, error }: { rejects: QuoterReject[]; onOpen: (symbol: string) => void; error?: string }) {
+  const [filters, setFilters] = useState<ColumnFiltersState>([]);
+  const rows = useMemo<RejectRow[]>(
+    () =>
+      rejects.map((x, i) => ({
+        id: `${x.time}:${x.book}:${i}`,
+        timeMs: Date.parse(x.time),
+        book: x.book,
+        request: x.request ?? "",
+        side: x.side ?? "",
+        level: x.level ?? "",
+        price: x.price ? Number(x.price) : null,
+        qty: x.qty ? Number(x.qty) : null,
+        reason: x.reason,
+        via: x.via,
+      })),
+    [rejects],
+  );
+  const columns = useMemo(
+    () => [
+      rejectHelper.accessor("timeMs", {
+        id: "time",
+        header: "Time",
+        size: 96,
+        meta: { label: "Time", filter: { kind: "since" } } satisfies ColMeta,
+        cell: (c) => <span className="text-faint">{new Date(c.getValue()).toLocaleTimeString()}</span>,
+      }),
+      rejectHelper.accessor("book", {
+        id: "book",
+        header: "Book",
+        size: 116,
+        meta: { label: "Book", filter: { kind: "multi" } } satisfies ColMeta,
+        cell: (c) => (
+          <SymbolLink className="font-medium" onOpen={() => onOpen(c.getValue())} title={`Open ${c.getValue()}`}>
+            {c.getValue()}
+          </SymbolLink>
+        ),
+      }),
+      rejectHelper.accessor("reason", {
+        id: "reason",
+        header: "Reason",
+        size: 240,
+        meta: { label: "Reason", title: "What the exchange said, or why the request didn't send", filter: { kind: "multi" } } satisfies ColMeta,
+        cell: (c) => (
+          <span className="text-sell" title={c.getValue()}>
+            {c.getValue()}
+          </span>
+        ),
+      }),
+      rejectHelper.accessor("request", {
+        id: "request",
+        header: "Request",
+        size: 76,
+        meta: { label: "Request", title: "What was refused: a new order, a modify or a cancel", filter: { kind: "multi" } } satisfies ColMeta,
+        cell: (c) => <span className="text-muted">{c.getValue() || "—"}</span>,
+      }),
+      rejectHelper.accessor("side", {
+        id: "side",
+        header: "Side",
+        size: 60,
+        meta: { label: "Side", filter: { kind: "multi" } } satisfies ColMeta,
+        cell: (c) => <span className={c.getValue() === "BUY" ? "text-buy" : c.getValue() === "SELL" ? "text-sell" : "text-faint"}>{c.getValue() || "—"}</span>,
+      }),
+      rejectHelper.accessor("level", {
+        id: "level",
+        header: "Level",
+        size: 60,
+        meta: { label: "Level", filter: { kind: "multi" } } satisfies ColMeta,
+        cell: (c) => <span className="text-muted">{c.getValue() || "—"}</span>,
+      }),
+      rejectHelper.accessor("price", {
+        id: "price",
+        header: "Price",
+        size: 92,
+        sortingFn: nullsLast("price"),
+        meta: { label: "Price", align: "right", title: "The price the refused request asked for", filter: { kind: "range" } } satisfies ColMeta,
+        cell: (c) => (c.getValue() === null ? <span className="text-faint">—</span> : fmtPrice(c.getValue()!)),
+      }),
+      rejectHelper.accessor("qty", {
+        id: "qty",
+        header: "Qty",
+        size: 84,
+        sortingFn: nullsLast("qty"),
+        meta: { label: "Qty", align: "right", filter: { kind: "range" } } satisfies ColMeta,
+        cell: (c) => (c.getValue() === null ? <span className="text-faint">—</span> : fmtQty(c.getValue()!)),
+      }),
+      rejectHelper.accessor("via", {
+        id: "via",
+        header: "Via",
+        size: 116,
+        meta: {
+          label: "Via",
+          title: "drop copy: the exchange rejected the order; FIX cancel reject: it refused a modify or cancel; send: the request itself failed",
+          filter: { kind: "multi" },
+        } satisfies ColMeta,
+        cell: (c) => <span className="text-faint">{c.getValue()}</span>,
+      }),
+    ],
+    [onOpen],
+  );
+  const facets = useMemo(() => {
+    const count = (f: (r: RejectRow) => string) => {
+      const m = new Map<string, number>();
+      for (const r of rows) m.set(f(r), (m.get(f(r)) ?? 0) + 1);
+      return [...m].map(([value, count]) => ({ value, count })).sort((a, b) => b.count - a.count);
+    };
+    return {
+      book: count((r) => r.book),
+      request: count((r) => r.request),
+      side: count((r) => r.side),
+      level: count((r) => r.level),
+      reason: count((r) => r.reason),
+      via: count((r) => r.via),
+    };
+  }, [rows]);
+  return (
+    <DataTable<RejectRow>
+      id="quoter-rejects"
+      data={rows}
+      columns={columns as ColumnDef<RejectRow, unknown>[]}
+      getRowId={(r) => r.id}
+      defaultSorting={[{ id: "time", desc: true }]}
+      filters={filters}
+      onFiltersChange={setFilters}
+      facets={facets}
+      empty={error ?? "No rejects since the books started or their counts were last reset"}
     />
   );
 }

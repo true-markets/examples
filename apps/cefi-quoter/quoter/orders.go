@@ -122,10 +122,14 @@ type Fill struct {
 type DropCopyResult struct {
 	Fill   *Fill
 	Reject string // set when an order or a request was rejected
-	Level  int
-	Side   Side
-	Orphan string // an order with our prefix that we aren't tracking: cancel it
-	Gone   bool   // the order left the book
+	// For a reject: the request refused (create, modify or cancel) and the price and size it asked for.
+	Request Action
+	Price   decimal.Decimal
+	Qty     decimal.Decimal
+	Level   int
+	Side    Side
+	Orphan  string // an order with our prefix that we aren't tracking: cancel it
+	Gone    bool   // the order left the book
 }
 
 // Book is every order this quoter is managing. Drop copies (on the WebSocket goroutine) and the
@@ -208,6 +212,17 @@ func (b *Book) Holds() (buy, sell decimal.Decimal) {
 		}
 	}
 	return buy, sell
+}
+
+// ByClOrdID is the order a FIX ClOrdID (any link in its replace chain) belongs to.
+func (b *Book) ByClOrdID(clOrdID string) (Order, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	o := b.orders[b.chain[clOrdID]]
+	if o == nil {
+		return Order{}, false
+	}
+	return *o, true
 }
 
 // Knows reports whether a FIX ClOrdID belongs to one of this book's orders.
@@ -401,6 +416,11 @@ func (b *Book) ApplyDropCopy(d tm.DropCopy) DropCopyResult {
 		res.Reject = d.Text
 		if res.Reject == "" {
 			res.Reject = "rejected"
+		}
+		res.Request, res.Price = o.InFlight, o.EffectivePrice()
+		res.Qty = o.Qty
+		if o.PendingQty != nil {
+			res.Qty = *o.PendingQty
 		}
 		switch o.InFlight {
 		case Modify:

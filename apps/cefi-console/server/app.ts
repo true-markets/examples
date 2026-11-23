@@ -88,6 +88,7 @@ export function createApp(backend: Backend, quoter?: QuoterClient): Hono {
   };
   app.get("/api/quoter/status", async (c) => c.json(await needQuoter().status()));
   app.get("/api/quoter/trades", async (c) => c.json(await needQuoter().trades(Number(c.req.query("limit") ?? 500) || 500)));
+  app.get("/api/quoter/rejects", async (c) => c.json(await needQuoter().rejects(Number(c.req.query("limit") ?? 1000) || 1000)));
   app.post("/api/quoter/books", async (c) => {
     const body = await json<{ symbol?: unknown; reference?: unknown; blend?: unknown }>(c);
     if (typeof body?.symbol !== "string") throw new TmError("send the symbol of the book to add", 400);

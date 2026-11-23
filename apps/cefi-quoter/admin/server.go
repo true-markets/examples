@@ -68,6 +68,13 @@ func Handler(d *quoter.Desk, token string, log *slog.Logger) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, d.Trades(limit))
 	})
+	mux.HandleFunc("GET /api/rejects", func(w http.ResponseWriter, r *http.Request) {
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		if limit <= 0 || limit > 5000 {
+			limit = 1000
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"rejects": d.Rejects(limit)})
+	})
 	mux.HandleFunc("POST /api/books", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Symbol    string                 `json:"symbol"`

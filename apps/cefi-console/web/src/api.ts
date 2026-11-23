@@ -19,6 +19,7 @@ import type {
   QuoterReferencePreview,
   QuoterSource,
   QuoterStatus,
+  QuoterReject,
   QuoterTradesReport,
   Session,
 } from "../../shared/api.ts";
@@ -245,6 +246,15 @@ export const useQuoterStatus = (enabled: boolean) =>
     retry: false,
   });
 
+export const useQuoterRejects = (enabled: boolean) =>
+  useQuery({
+    queryKey: ["quoter-rejects"],
+    queryFn: () => call<{ rejects: QuoterReject[] }>("GET", "/api/quoter/rejects?limit=1000"),
+    enabled,
+    refetchInterval: 2_000,
+    retry: false,
+  });
+
 export const useQuoterTrades = (enabled: boolean) =>
   useQuery({
     queryKey: ["quoter-trades"],
@@ -341,7 +351,7 @@ export const useResetQuoterPosition = () =>
 export const useResetQuoterRejects = () =>
   useAction((symbol?: string) => call("POST", symbol ? `${bookPath(symbol)}/reset-rejects` : "/api/quoter/reset-rejects"), {
     success: (_r, symbol) => `${symbol ?? "Every book"}: reject counts reset`,
-    invalidate: ["quoter-book", "quoter-status"],
+    invalidate: ["quoter-book", "quoter-status", "quoter-rejects"],
   });
 
 export const useAddQuoterBook = () =>

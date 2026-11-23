@@ -150,6 +150,19 @@ func (d *Desk) Ledger() *Ledger { return d.ledger }
 // Trades is every fill this run, newest first (up to limit; 0 for all), with mark-outs.
 func (d *Desk) Trades(limit int) TradesReport { return d.journal.Report(limit) }
 
+// Rejects is every book's kept rejects, newest first, at most limit.
+func (d *Desk) Rejects(limit int) []Reject {
+	out := []Reject{}
+	for _, e := range d.engines() {
+		out = append(out, e.Rejects()...)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Time.After(out[j].Time) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
 // --- books -----------------------------------------------------------------------------------
 
 // Add starts managing a book, stopped (or quoting, if enabled). blend nil uses the listing's
