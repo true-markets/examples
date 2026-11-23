@@ -35,6 +35,7 @@ import { useUi } from "../ui-state.tsx";
 import { BulkParams } from "./BulkParams.tsx";
 import { Stack } from "./Balances.tsx";
 import { ago, price as fmtPrice, qty as fmtQty, quoteUnit, usd as fmtUsd } from "../format.ts";
+import { kindFacets, matchesKind } from "../trade-kinds.ts";
 import { Button, cx, Empty, inputClass, Modal, Panel, StatusBadge, SymbolLink } from "./ui.tsx";
 
 // The management screen for a running cefi-quoter (apps/cefi-quoter). One quoter runs every book,
@@ -2044,6 +2045,8 @@ function TradesTable({ id, trades, hz, onOpen }: { id: string; trades: QuoterTra
         id: "kind",
         header: "Kind",
         size: 96,
+        // maker takes every level; maker L0, L1... one each.
+        filterFn: (row, _id, v: string[] | undefined) => matchesKind(row.original, v),
         meta: { label: "Kind", title: "maker (with its ladder level), profit take or takeout", filter: { kind: "multi" } } satisfies ColMeta,
         cell: (c) => {
           const t = c.row.original;
@@ -2136,7 +2139,7 @@ function TradesTable({ id, trades, hz, onOpen }: { id: string; trades: QuoterTra
       for (const r of rows) m.set(f(r), (m.get(f(r)) ?? 0) + 1);
       return [...m].map(([value, count]) => ({ value, count }));
     };
-    return { symbol: count((r) => r.symbol), side: count((r) => r.side), kind: count((r) => r.kind) };
+    return { symbol: count((r) => r.symbol), side: count((r) => r.side), kind: kindFacets(rows) };
   }, [rows]);
   return (
     <DataTable<TradeRow>

@@ -126,7 +126,8 @@ export function DataTable<T>(p: DataTableProps<T>) {
           ...c,
           size: Math.max(c.size ?? 110, floor),
           minSize: Math.max(c.minSize ?? 44, floor),
-          ...(meta.filter && !p.manualFiltering ? { filterFn: filterFnFor<T>(meta.filter) } : {}),
+          // A column with its own filterFn (one value standing for several) keeps it.
+          ...(meta.filter && !p.manualFiltering && !c.filterFn ? { filterFn: filterFnFor<T>(meta.filter) } : {}),
         };
       }),
     [p.columns, p.manualFiltering],
