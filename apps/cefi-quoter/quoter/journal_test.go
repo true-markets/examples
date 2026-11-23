@@ -1,6 +1,7 @@
 package quoter
 
 import (
+	"math"
 	"testing"
 	"time"
 )
@@ -39,6 +40,10 @@ func TestJournalMarkouts(t *testing.T) {
 	// Back at the fill-time mid, every fill kept all its edge.
 	if r := *s.Retention[1]; r < 0.99 || r > 1.01 {
 		t.Fatalf("retention at 300s %v, want 1", r)
+	}
+	// ... so the edge at fill in dollars is the 300s mark-out in dollars.
+	if s.EdgePnl == nil || math.Abs(*s.EdgePnl-*s.MarkedPnl[1]) > 1e-9 || *s.EdgePnl <= 0 {
+		t.Fatalf("edge pnl %v, 300s pnl %v", s.EdgePnl, s.MarkedPnl[1])
 	}
 	if len(j.pending["BTC-USDC"]) != 0 {
 		t.Fatal("fully marked trades should leave the pending list")

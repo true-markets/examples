@@ -57,6 +57,7 @@ export function QuoterScreen() {
   const { symbol: shared, setSymbol } = useUi();
   const [picked, setPicked] = useState<string>();
   const [help, setHelp] = useHelpSetting();
+  const [units, setUnits] = useStoredChoice<Units>("cefi-console:quoter-units", "bps", ["bps", "usd"]);
   // At most one breakdown open at a time; it takes the screen below the bars in place of the books.
   const [open, setOpen] = useStoredChoice<"none" | "edge" | "params">("cefi-console:quoter-breakdown", "none", ["none", "edge", "params"]);
   const books = desk?.books ?? [];
@@ -102,59 +103,61 @@ export function QuoterScreen() {
   // summary bars, then the selected book, or the breakdown one of the bars opened in its place.
   return (
     <ShowHelp.Provider value={help}>
-      <div className="flex h-full min-h-0 flex-col gap-2">
-        <DeskBar d={desk} stale={!!status.error} help={help} onHelp={setHelp} />
-        <Warnings list={desk.warnings} />
-        <div className="min-h-0 flex-1">
-          <Split id="quoter" orientation="horizontal">
-            <Pane id="quoter-left" defaultSize="28" minSize={300}>
-              <Split id="quoter-left" orientation="vertical">
-                <Pane id="quoter-books" defaultSize="55" minSize={120}>
-                  <div className={pane}>
-                    <BooksPanel d={desk} selected={shownOpen === "none" ? selected : undefined} onSelect={select} />
-                  </div>
-                </Pane>
-                <Divider vertical />
-                <Pane id="quoter-balances" defaultSize="45" minSize={100}>
-                  <div className={pane}>
-                    <SharedBalancesPanel d={desk} onOpen={select} />
-                  </div>
-                </Pane>
-              </Split>
-            </Pane>
-            <Divider />
-            <Pane id="quoter-book" defaultSize="72" minSize="40">
-              <div className={cx(pane, "flex flex-col gap-2")}>
-                <AllBooksBar d={desk} open={shownOpen === "params"} onToggle={(o) => setOpen(o ? "params" : "none")} />
-                <ActivityBar d={desk} open={shownOpen === "edge"} onToggle={(o) => setOpen(o ? "edge" : "none")} />
-                {shownOpen === "edge" && (
-                  <div className="min-h-0 flex-1">
-                    <TradesView onOpen={select} />
-                  </div>
-                )}
-                {shownOpen === "params" && (
-                  <div className="flex min-h-0 flex-1 flex-col gap-2">
-                    <QuoterSettings />
-                    <div className="min-h-0 flex-1">
-                      <BulkParams d={desk} />
+      <ShowUnits.Provider value={units}>
+        <div className="flex h-full min-h-0 flex-col gap-2">
+          <DeskBar d={desk} stale={!!status.error} help={help} onHelp={setHelp} units={units} onUnits={setUnits} />
+          <Warnings list={desk.warnings} />
+          <div className="min-h-0 flex-1">
+            <Split id="quoter" orientation="horizontal">
+              <Pane id="quoter-left" defaultSize="28" minSize={300}>
+                <Split id="quoter-left" orientation="vertical">
+                  <Pane id="quoter-books" defaultSize="55" minSize={120}>
+                    <div className={pane}>
+                      <BooksPanel d={desk} selected={shownOpen === "none" ? selected : undefined} onSelect={select} />
                     </div>
-                  </div>
-                )}
-                {/* Hidden, not unmounted, under a breakdown: closing it brings the book back as it was. */}
-                <div className={cx("min-h-0 flex-1", shownOpen !== "none" && "hidden")}>
-                  {selected ? (
-                    <BookView key={selected} symbol={selected} live={desk.environment === "production"} paper={desk.mode === "paper"} />
-                  ) : (
-                    <Panel title="No books yet" className="h-full">
-                      <Empty>Add a book on the left. It starts stopped, with a preview of what it would quote, until you start it.</Empty>
-                    </Panel>
+                  </Pane>
+                  <Divider vertical />
+                  <Pane id="quoter-balances" defaultSize="45" minSize={100}>
+                    <div className={pane}>
+                      <SharedBalancesPanel d={desk} onOpen={select} />
+                    </div>
+                  </Pane>
+                </Split>
+              </Pane>
+              <Divider />
+              <Pane id="quoter-book" defaultSize="72" minSize="40">
+                <div className={cx(pane, "flex flex-col gap-2")}>
+                  <AllBooksBar d={desk} open={shownOpen === "params"} onToggle={(o) => setOpen(o ? "params" : "none")} />
+                  <ActivityBar d={desk} open={shownOpen === "edge"} onToggle={(o) => setOpen(o ? "edge" : "none")} />
+                  {shownOpen === "edge" && (
+                    <div className="min-h-0 flex-1">
+                      <TradesView onOpen={select} />
+                    </div>
                   )}
+                  {shownOpen === "params" && (
+                    <div className="flex min-h-0 flex-1 flex-col gap-2">
+                      <QuoterSettings />
+                      <div className="min-h-0 flex-1">
+                        <BulkParams d={desk} />
+                      </div>
+                    </div>
+                  )}
+                  {/* Hidden, not unmounted, under a breakdown: closing it brings the book back as it was. */}
+                  <div className={cx("min-h-0 flex-1", shownOpen !== "none" && "hidden")}>
+                    {selected ? (
+                      <BookView key={selected} symbol={selected} live={desk.environment === "production"} paper={desk.mode === "paper"} />
+                    ) : (
+                      <Panel title="No books yet" className="h-full">
+                        <Empty>Add a book on the left. It starts stopped, with a preview of what it would quote, until you start it.</Empty>
+                      </Panel>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </Pane>
-          </Split>
+              </Pane>
+            </Split>
+          </div>
         </div>
-      </div>
+      </ShowUnits.Provider>
     </ShowHelp.Provider>
   );
 }
@@ -227,6 +230,56 @@ function Help({ children }: { children: ReactNode }) {
   return useContext(ShowHelp) ? <>{children}</> : null;
 }
 
+// ---------- bps or dollars ----------
+
+// Distances from fair value (edge, mark-outs, how far a quote sits from the mid, the spread) read
+// in bps or in dollars, by the switch in the Quoter bar. Kept per browser. Parameters stay in bps.
+type Units = "bps" | "usd";
+const ShowUnits = createContext<Units>("bps");
+const useUnits = () => useContext(ShowUnits);
+
+// Dollars with enough decimals for a few bps of a small order: $0.0032, $0.512, $12.40.
+function smallUsd(v: number): string {
+  const a = Math.abs(v);
+  if (a === 0 || a >= 1) return fmtUsd(a);
+  return "$" + a.toFixed(a >= 0.01 ? 3 : 4);
+}
+
+// A signed bps or dollar figure, green in our favor, red against.
+function money(v: number | null | undefined, units: Units) {
+  if (units === "bps") return bps(v);
+  if (v === null || v === undefined || !Number.isFinite(v)) return <span className="text-faint">—</span>;
+  return <span className={v > 0 ? "text-buy" : v < 0 ? "text-sell" : ""}>{(v > 0 ? "+" : v < 0 ? "−" : "") + smallUsd(v)}</span>;
+}
+
+function UnitsSwitch({ units, onUnits }: { units: Units; onUnits: (u: Units) => void }) {
+  return (
+    <span
+      role="radiogroup"
+      title="Show edge, mark-outs and distances from the mid in bps or dollars"
+      className="inline-flex rounded border border-line text-[11px]"
+    >
+      {(
+        [
+          ["bps", "bps"],
+          ["usd", "$"],
+        ] as const
+      ).map(([u, label]) => (
+        <button
+          key={u}
+          type="button"
+          role="radio"
+          aria-checked={units === u}
+          onClick={() => onUnits(u)}
+          className={cx("px-1.5 py-0.5", units === u ? "bg-raised font-semibold text-ink" : "text-faint hover:text-ink")}
+        >
+          {label}
+        </button>
+      ))}
+    </span>
+  );
+}
+
 // "BTC-USD" is a Coinbase product, "hyperliquid:xyz:GOOGL" a Hyperliquid perp, "kraken:GOOGLx/USD" a
 // Kraken pair.
 export const describeReference = describeSource;
@@ -246,7 +299,21 @@ function StateBadge({ state }: { state: QuoterStatus["state"] }) {
 
 // ---------- the whole quoter ----------
 
-function DeskBar({ d, stale, help, onHelp }: { d: QuoterDeskStatus; stale: boolean; help: boolean; onHelp: (on: boolean) => void }) {
+function DeskBar({
+  d,
+  stale,
+  help,
+  onHelp,
+  units,
+  onUnits,
+}: {
+  d: QuoterDeskStatus;
+  stale: boolean;
+  help: boolean;
+  onHelp: (on: boolean) => void;
+  units: Units;
+  onUnits: (u: Units) => void;
+}) {
   const control = useQuoterControl();
   const [confirm, setConfirm] = useState(false);
   const live = d.environment === "production";
@@ -296,6 +363,7 @@ function DeskBar({ d, stale, help, onHelp }: { d: QuoterDeskStatus; stale: boole
       >
         <CircleHelp size={12} className={help ? "text-info" : undefined} /> Help {help ? "on" : "off"}
       </Button>
+      <UnitsSwitch units={units} onUnits={onUnits} />
       {stale && <span className="text-[11px] text-sell">· lost contact with the quoter, showing the last status</span>}
       <div className="ml-auto flex items-center gap-3">
         <span className="num text-xs">
@@ -846,32 +914,53 @@ function PricesCard({ s, paper }: { s: QuoterStatus; paper: boolean }) {
       <Row label="Quoting mid" title="The reference after inventory skew">
         {s.mid ? fmtPrice(s.mid) : "—"}
       </Row>
-      <Row label="Skew">{s.skewBps ? `${s.skewBps.toFixed(2)} bps` : "none"}</Row>
+      <Row label="Skew" title="How far inventory skew moves the mid toward getting flat">
+        {s.skewBps && ref && s.mid ? <FromMid price={s.mid} mid={ref.mid} digits={2} /> : "none"}
+      </Row>
       <Row label="Book bid / ask" title={paper ? "The exchange's best bid and ask; in paper mode, the reference's" : "The exchange's best bid and ask"}>
         <span className="text-buy">{s.bestBid ? fmtPrice(s.bestBid) : "—"}</span> / <span className="text-sell">{s.bestAsk ? fmtPrice(s.bestAsk) : "—"}</span>
       </Row>
-      <Row label="Bid from mid" title="The book's best bid against the reference mid, in bps and dollars">
+      <Row label="Bid from mid" title="The book's best bid against the reference mid">
         <FromMid price={s.bestBid} mid={ref?.mid} />
       </Row>
-      <Row label="Ask from mid" title="The book's best ask against the reference mid, in bps and dollars">
+      <Row label="Ask from mid" title="The book's best ask against the reference mid">
         <FromMid price={s.bestAsk} mid={ref?.mid} />
       </Row>
     </Card>
   );
 }
 
-// How far a price sits from the mid: negative below it, positive above.
-function FromMid({ price, mid }: { price: string | null | undefined; mid: string | null | undefined }) {
+// How far a price sits from the mid, negative below it and positive above, both ways.
+function fromMid(price: string | null | undefined, mid: string | null | undefined, digits = 1) {
   const p = Number(price);
   const m = Number(mid);
-  if (!(p > 0) || !(m > 0)) return <span className="text-faint">—</span>;
-  const d = p - m;
-  const sign = d > 0 ? "+" : d < 0 ? "−" : "";
+  if (!(p > 0) || !(m > 0)) return null;
+  const diff = p - m;
+  const sign = diff > 0 ? "+" : diff < 0 ? "−" : "";
+  return { bps: `${sign}${Math.abs((diff / m) * 10_000).toFixed(digits)} bps`, usd: sign + smallUsd(diff) };
+}
+
+// That distance in the chosen unit, with the other one faint after it.
+function FromMid({ price, mid, digits = 1 }: { price: string | null | undefined; mid: string | null | undefined; digits?: number }) {
+  const units = useUnits();
+  const d = fromMid(price, mid, digits);
+  if (!d) return <span className="text-faint">—</span>;
   return (
     <>
-      {sign}
-      {Math.abs((d / m) * 10_000).toFixed(1)} bps <span className="text-faint">· {sign + fmtUsd(Math.abs(d))}</span>
+      {units === "bps" ? d.bps : d.usd} <span className="text-faint">· {units === "bps" ? d.usd : d.bps}</span>
     </>
+  );
+}
+
+// The same distance stacked small under a ladder price, in the chosen unit only.
+function MidOffset({ price, mid }: { price: string | undefined; mid: string | undefined }) {
+  const units = useUnits();
+  const d = fromMid(price, mid);
+  if (!d) return null;
+  return (
+    <span className="block text-[10px] leading-tight text-faint" title="From the reference mid">
+      {units === "bps" ? d.bps : d.usd}
+    </span>
   );
 }
 
@@ -1054,6 +1143,7 @@ function LadderPanel({ s }: { s: QuoterStatus }) {
     askTarget: find(s.targets, "SELL", level, (t: QuoterTarget) => t.side),
   }));
   const th = "px-2 py-1.5 font-medium";
+  const mid = s.reference?.mid;
   return (
     <Panel
       className="h-full"
@@ -1081,11 +1171,23 @@ function LadderPanel({ s }: { s: QuoterStatus }) {
                 <tr key={r.level} className="border-b border-line/60">
                   <td className="px-2 py-1.5">{r.bid && <OrderBadge o={r.bid} />}</td>
                   <td className="px-2 py-1.5 text-right">{r.bid ? <Size o={r.bid} /> : r.bidTarget ? <TargetSize t={r.bidTarget} /> : null}</td>
-                  <td className="px-2 py-1.5 text-right text-buy">{r.bid ? <OrderPrice o={r.bid} /> : "—"}</td>
-                  <td className="px-2 py-1.5 text-right text-faint">{r.bidTarget ? fmtPrice(r.bidTarget.price) : ""}</td>
+                  <td className="px-2 py-1.5 text-right text-buy">
+                    {r.bid ? <OrderPrice o={r.bid} /> : "—"}
+                    {r.bid && <MidOffset price={r.bid.pendingPrice ?? r.bid.price} mid={mid} />}
+                  </td>
+                  <td className="px-2 py-1.5 text-right text-faint">
+                    {r.bidTarget && fmtPrice(r.bidTarget.price)}
+                    {r.bidTarget && <MidOffset price={r.bidTarget.price} mid={mid} />}
+                  </td>
                   <td className="px-2 py-1.5 text-center text-muted">{r.level}</td>
-                  <td className="px-2 py-1.5 text-faint">{r.askTarget ? fmtPrice(r.askTarget.price) : ""}</td>
-                  <td className="px-2 py-1.5 text-sell">{r.ask ? <OrderPrice o={r.ask} /> : "—"}</td>
+                  <td className="px-2 py-1.5 text-faint">
+                    {r.askTarget && fmtPrice(r.askTarget.price)}
+                    {r.askTarget && <MidOffset price={r.askTarget.price} mid={mid} />}
+                  </td>
+                  <td className="px-2 py-1.5 text-sell">
+                    {r.ask ? <OrderPrice o={r.ask} /> : "—"}
+                    {r.ask && <MidOffset price={r.ask.pendingPrice ?? r.ask.price} mid={mid} />}
+                  </td>
                   <td className="px-2 py-1.5">{r.ask ? <Size o={r.ask} /> : r.askTarget ? <TargetSize t={r.askTarget} /> : null}</td>
                   <td className="px-2 py-1.5 text-right">{r.ask && <OrderBadge o={r.ask} />}</td>
                 </tr>
@@ -1104,7 +1206,8 @@ function LadderPanel({ s }: { s: QuoterStatus }) {
           <p className="border-t border-line px-3 py-2 text-[11px] leading-relaxed text-faint">
             Target is where the strategy wants each order this cycle; Bid and Ask are where the orders rest, with an arrow while a modify is in flight. An order
             only moves once its target is at least the modify threshold away ({s.params.modifyThresholdBps} bps). Size is what is still resting, in{" "}
-            {s.market.baseSymbol}, with its value in USD under it.
+            {s.market.baseSymbol}, with its value in USD under it. Under each price is its distance from the reference mid, in bps or dollars by the switch in
+            the Quoter bar.
           </p>
         </Help>
       </div>
@@ -1115,6 +1218,7 @@ function LadderPanel({ s }: { s: QuoterStatus }) {
 // The spread between the ladder's own best bid and best ask: what's resting, or what it would quote
 // when nothing rests yet (a stopped book's preview).
 function LadderSpread({ s }: { s: QuoterStatus }) {
+  const units = useUnits();
   const resting = s.orders.filter((o) => !o.take && o.level >= 0);
   const bids = resting.filter((o) => o.side === "BUY").map((o) => Number(o.price));
   const asks = resting.filter((o) => o.side === "SELL").map((o) => Number(o.price));
@@ -1126,13 +1230,14 @@ function LadderSpread({ s }: { s: QuoterStatus }) {
   const bid = Math.max(...bids);
   const ask = Math.min(...asks);
   const spread = ask - bid;
-  const bps = (spread / ((ask + bid) / 2)) * 10_000;
+  const inBps = `${((spread / ((ask + bid) / 2)) * 10_000).toFixed(1)} bps`;
+  const [first, second] = units === "bps" ? [inBps, fmtUsd(spread)] : [fmtUsd(spread), inBps];
   return (
     <span
       className="num text-[11px] text-muted"
       title={`${fromTargets ? "What the ladder would quote" : "The ladder's resting best bid and ask"}: ${fmtPrice(bid)} / ${fmtPrice(ask)}`}
     >
-      Spread <span className="text-ink">{bps.toFixed(1)} bps</span> · <span className="text-ink">{fmtUsd(spread)}</span>
+      Spread <span className="text-ink">{first}</span> · <span className="text-faint">{second}</span>
       {fromTargets && <span className="text-faint"> (target)</span>}
     </span>
   );
@@ -1488,6 +1593,7 @@ function OpenButton({
 
 // Results across every book; opens every book's edge and every trade.
 function AllBooksBar({ d, open, onToggle }: { d: QuoterDeskStatus; open: boolean; onToggle: (open: boolean) => void }) {
+  const units = useUnits();
   if (!d.books.length) return null;
   const t = d.trades;
   return (
@@ -1522,15 +1628,22 @@ function AllBooksBar({ d, open, onToggle }: { d: QuoterDeskStatus; open: boolean
         );
       })}
       {t.trades > 0 && (
-        <span className={barItem} title="Notional-weighted edge at fill, and what was left of it at each mark-out">
+        <span
+          className={barItem}
+          title={
+            units === "bps"
+              ? "Notional-weighted edge at fill, and what was left of it at each mark-out"
+              : "Edge at fill in dollars, summed, and what was left of it at each mark-out"
+          }
+        >
           <span className={barLabel}>Edge</span>
-          {bps(t.edgeBps)} at fill
+          {money(units === "bps" ? t.edgeBps : t.edgePnl, units)} at fill
           {t.horizonsSecs.map((h, i) => (
             <span key={h}>
-              · {bps(t.markouts[i])} at +{h}s
+              · {money(units === "bps" ? t.markouts[i] : t.markedPnl[i], units)} at +{h}s
             </span>
           ))}
-          <span className="text-faint">bps</span>
+          {units === "bps" && <span className="text-faint">bps</span>}
         </span>
       )}
     </SummaryBar>
@@ -1848,6 +1961,7 @@ interface TradeRow {
   price: number;
   notional: number;
   fair: number | null; // null: no reference price at the fill (just after a start, or filled while down)
+  // Edge and mark-outs in the unit the switch shows: bps, or dollars of this trade's notional.
   edge: number | null;
   markouts: (number | null)[];
   kept: number | null;
@@ -1929,6 +2043,8 @@ function SummaryTable({
   onOpen: (symbol: string) => void;
 }) {
   const [filters, setFilters] = useState<ColumnFiltersState>([]);
+  const units = useUnits();
+  const usd = units === "usd";
   const lastH = hz[hz.length - 1];
   const columns = useMemo(
     () => [
@@ -1965,27 +2081,32 @@ function SummaryTable({
         meta: { label: "Notional", align: "right", filter: { kind: "range", unit: "$" } } satisfies ColMeta,
         cell: (c) => fmtUsd(c.getValue()),
       }),
-      summaryHelper.accessor("edgeBps", {
+      summaryHelper.accessor((b) => (usd ? b.edgePnl : b.edgeBps), {
         id: "edge",
-        header: "Edge at fill",
-        size: 100,
+        header: `Edge at fill ${usd ? "$" : "bps"}`,
+        size: 110,
         sortingFn: nullsLast("edge"),
-        meta: { label: "Edge at fill", align: "right", title: "Notional-weighted, in bps in our favor", filter: { kind: "range" } } satisfies ColMeta,
-        cell: (c) => bps(c.getValue()),
+        meta: {
+          label: "Edge at fill",
+          align: "right",
+          title: usd ? "In dollars in our favor, summed" : "Notional-weighted, in bps in our favor",
+          filter: { kind: "range", unit: usd ? "$" : undefined },
+        } satisfies ColMeta,
+        cell: (c) => money(c.getValue(), units),
       }),
       ...hz.map((h, i) =>
-        summaryHelper.accessor((b) => b.markouts[i] ?? null, {
+        summaryHelper.accessor((b) => (usd ? b.markedPnl[i] : b.markouts[i]) ?? null, {
           id: `m${h}`,
-          header: `+${h}s`,
-          size: 80,
+          header: `+${h}s ${usd ? "$" : "bps"}`,
+          size: 90,
           sortingFn: nullsLast(`m${h}`),
           meta: {
             label: `Mark-out +${h}s`,
             align: "right",
-            title: `Mark-out ${h}s after each fill, notional-weighted, bps`,
-            filter: { kind: "range" },
+            title: usd ? `Mark-out ${h}s after each fill, in dollars, summed` : `Mark-out ${h}s after each fill, notional-weighted, bps`,
+            filter: { kind: "range", unit: usd ? "$" : undefined },
           } satisfies ColMeta,
-          cell: (c) => <span title={`${c.row.original.marked[i]} of ${c.row.original.trades} trades marked`}>{bps(c.getValue())}</span>,
+          cell: (c) => <span title={`${c.row.original.marked[i]} of ${c.row.original.trades} trades marked`}>{money(c.getValue(), units)}</span>,
         }),
       ),
       ...hz.map((h, i) =>
@@ -2020,9 +2141,11 @@ function SummaryTable({
         },
       }),
     ],
-    [hz, lastH, onOpen],
+    [hz, lastH, onOpen, units, usd],
   );
   const facets = useMemo(() => ({ symbol: byBook.map((b) => ({ value: b.symbol, count: b.trades })) }), [byBook]);
+  // New row objects when the unit changes: the table caches each row's values.
+  const data = useMemo(() => byBook.map((b) => ({ ...b })), [byBook, units]); // eslint-disable-line react-hooks/exhaustive-deps
   const totalPnl = total.markedPnl[total.markedPnl.length - 1];
   const totalKept = total.retention[total.retention.length - 1];
   return (
@@ -2031,7 +2154,7 @@ function SummaryTable({
         <div className="min-h-0 flex-1">
           <DataTable<QuoterTradeSummary>
             id="quoter-trade-summary"
-            data={byBook}
+            data={data}
             columns={columns as ColumnDef<QuoterTradeSummary, unknown>[]}
             getRowId={(b) => b.symbol}
             defaultSorting={[{ id: "notional", desc: true }]}
@@ -2047,7 +2170,10 @@ function SummaryTable({
                 <span>
                   <span className="text-ink">{fmtUsd(Number(total.notional))}</span> notional
                 </span>
-                <span>edge {bps(total.edgeBps)} bps</span>
+                <span>
+                  edge {money(usd ? total.edgePnl : total.edgeBps, units)}
+                  {usd ? "" : " bps"}
+                </span>
                 <span>
                   kept +{lastH}s {pct(totalKept)}
                 </span>
@@ -2075,11 +2201,17 @@ function SummaryTable({
 // onOpen, where given, makes each trade's book open that book.
 function TradesTable({ id, trades, hz, onOpen }: { id: string; trades: QuoterTrade[]; hz: number[]; onOpen?: (symbol: string) => void }) {
   const [filters, setFilters] = useState<ColumnFiltersState>([]);
+  const units = useUnits();
+  const usd = units === "usd";
+  // Rebuilt when the unit changes: the table caches each row's values, so the rows themselves
+  // carry the unit shown.
   const rows = useMemo<TradeRow[]>(
     () =>
       trades.map((t) => {
         const last = t.markouts[t.markouts.length - 1];
         const priced = !t.recovered && !t.unpriced;
+        const notional = Number(t.notional);
+        const shown = (v: number | null | undefined) => (v === null || v === undefined ? null : usd ? (v / 10_000) * notional : v);
         return {
           id: String(t.id),
           timeMs: Date.parse(t.time),
@@ -2089,15 +2221,15 @@ function TradesTable({ id, trades, hz, onOpen }: { id: string; trades: QuoterTra
           level: t.level,
           qty: Number(t.qty),
           price: Number(t.price),
-          notional: Number(t.notional),
+          notional,
           fair: priced ? Number(t.refMid) : null,
-          edge: priced ? t.edgeBps : null,
-          markouts: t.markouts,
+          edge: priced ? shown(t.edgeBps) : null,
+          markouts: t.markouts.map(shown),
           // Not over an edge under 1 bps: -8 over +0.2 reads as -4000%, which says nothing.
           kept: priced && last !== null && last !== undefined && t.edgeBps >= 1 ? last / t.edgeBps : null,
         };
       }),
-    [trades],
+    [trades, usd],
   );
   const columns = useMemo(
     () => [
@@ -2175,24 +2307,29 @@ function TradesTable({ id, trades, hz, onOpen }: { id: string; trades: QuoterTra
       }),
       tradeHelper.accessor("edge", {
         id: "edge",
-        header: "Edge",
-        size: 76,
+        header: `Edge ${usd ? "$" : "bps"}`,
+        size: 84,
         sortingFn: nullsLast("edge"),
         meta: {
           label: "Edge",
           align: "right",
-          title: "bps from fair value in our favor, at the fill. — when there was no reference price then, and the trade is left out of the averages",
-          filter: { kind: "range" },
+          title: `${usd ? "Dollars" : "bps"} from fair value in our favor, at the fill. — when there was no reference price then, and the trade is left out of the averages`,
+          filter: { kind: "range", unit: usd ? "$" : undefined },
         } satisfies ColMeta,
-        cell: (c) => bps(c.getValue()),
+        cell: (c) => money(c.getValue(), units),
       }),
       ...hz.map((h, i) =>
         tradeHelper.accessor((t) => t.markouts[i] ?? null, {
           id: `m${h}`,
-          header: `+${h}s`,
-          size: 72,
+          header: `+${h}s ${usd ? "$" : "bps"}`,
+          size: 84,
           sortingFn: nullsLast(`m${h}`),
-          meta: { label: `Mark-out +${h}s`, align: "right", title: `bps in our favor ${h}s after the fill`, filter: { kind: "range" } } satisfies ColMeta,
+          meta: {
+            label: `Mark-out +${h}s`,
+            align: "right",
+            title: `${usd ? "Dollars" : "bps"} in our favor ${h}s after the fill`,
+            filter: { kind: "range", unit: usd ? "$" : undefined },
+          } satisfies ColMeta,
           cell: (c) => {
             const v = c.getValue();
             return v === null ? (
@@ -2200,7 +2337,7 @@ function TradesTable({ id, trades, hz, onOpen }: { id: string; trades: QuoterTra
                 …
               </span>
             ) : (
-              bps(v)
+              money(v, units)
             );
           },
         }),
@@ -2219,7 +2356,7 @@ function TradesTable({ id, trades, hz, onOpen }: { id: string; trades: QuoterTra
         cell: (c) => pct(c.getValue()),
       }),
     ],
-    [hz, onOpen],
+    [hz, onOpen, units, usd],
   );
   const facets = useMemo(() => {
     const count = (f: (r: TradeRow) => string) => {

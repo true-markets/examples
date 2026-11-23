@@ -219,6 +219,7 @@ type TradeSummary struct {
 	Trades    int             `json:"trades"`
 	Notional  decimal.Decimal `json:"notional"`
 	EdgeBps   *float64        `json:"edgeBps"`
+	EdgePnl   *float64        `json:"edgePnl"` // edge at fill in quote currency, summed
 	Markouts  []*float64      `json:"markouts"`
 	Retention []*float64      `json:"retention"` // mark-out over edge at fill, per horizon
 	Marked    []int           `json:"marked"`    // trades counted in each mark-out
@@ -288,8 +289,8 @@ func summarize(symbol string, trades []*Trade, horizons []int) TradeSummary {
 		}
 	}
 	if w > 0 {
-		v := edgeW / w
-		s.EdgeBps = &v
+		v, p := edgeW/w, edgeW/10_000
+		s.EdgeBps, s.EdgePnl = &v, &p
 	}
 	for i := range horizons {
 		if markN[i] == 0 {

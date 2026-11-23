@@ -455,6 +455,7 @@ export interface QuoterTradeSummary {
   trades: number;
   notional: string;
   edgeBps: number | null;
+  edgePnl: number | null; // edge at fill in quote currency, summed
   markouts: (number | null)[];
   retention: (number | null)[];
   marked: number[];
