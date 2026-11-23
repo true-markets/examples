@@ -361,8 +361,4 @@ go test ./...
 
 No test touches the network. The engine runs against a fake exchange that answers each request with the drop copy the real one would send, and the FIX session runs against a fake FIX server on localhost.
 
-## Where it came from, and what's left out
-
-This is a Go rewrite of an internal Python market maker. The parts that make a quoter work carried over: every book in one process on one shared balance ledger, the modify-first reconcile, pre-registering requests ahead of the drop copy, clamping against our own and the exchange's orders, budget accounting that counts our own holds, FIX ClOrdID chaining, and pulling quotes when a feed goes stale.
-
 The profit taker and takeout came over too ([Taking](#taking-getting-unstuck)). Left out on purpose, because each is a strategy of its own and they obscure the core loop: the momentum taker, volatility- and imbalance-driven spreads, multi-maker scenarios and the terminal UI. Each would plug in as another input to `BuildLadder` or another kind of `Step`.
