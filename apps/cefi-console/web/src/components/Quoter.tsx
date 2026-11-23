@@ -977,7 +977,7 @@ function ActivityCard({ s }: { s: QuoterStatus }) {
       }
     >
       <Row label="New / modify / cancel" title="Requests sent">
-        {st.creates} / <span className="text-info">{st.modifies}</span> / {st.cancels}
+        {st.creates} / {st.modifies} / {st.cancels}
       </Row>
       <Row label="Fills / rejects">
         <span className="text-buy">{st.fills}</span> / <span className={st.rejects ? "text-sell" : ""}>{st.rejects}</span>
@@ -1548,7 +1548,7 @@ function ActivityBar({ d, open, onToggle }: { d: QuoterDeskStatus; open: boolean
           <Fragment key={x.quote}>
             <span className={barItem} title="New, modify and cancel requests sent">
               <span className={barLabel}>Requests</span>
-              {st.creates} new · <span className="text-info">{st.modifies} modify</span> · {st.cancels} cancel
+              {st.creates} new · {st.modifies} modify · {st.cancels} cancel
             </span>
             <span className={barItem}>
               <span className={barLabel}>Fills</span>
@@ -1777,8 +1777,8 @@ interface TradeRow {
   qty: number;
   price: number;
   notional: number;
-  fair: number;
-  edge: number;
+  fair: number | null; // null: no reference price at the fill (just after a start, or filled while down)
+  edge: number | null;
   markouts: (number | null)[];
   kept: number | null;
 }
@@ -1960,6 +1960,7 @@ function TradesTable({ id, trades, hz }: { id: string; trades: QuoterTrade[]; hz
     () =>
       trades.map((t) => {
         const last = t.markouts[t.markouts.length - 1];
+        const priced = !t.recovered && !t.unpriced;
         return {
           id: String(t.id),
           timeMs: Date.parse(t.time),
@@ -1970,10 +1971,11 @@ function TradesTable({ id, trades, hz }: { id: string; trades: QuoterTrade[]; hz
           qty: Number(t.qty),
           price: Number(t.price),
           notional: Number(t.notional),
-          fair: Number(t.refMid),
-          edge: t.edgeBps,
+          fair: priced ? Number(t.refMid) : null,
+          edge: priced ? t.edgeBps : null,
           markouts: t.markouts,
-          kept: last !== null && last !== undefined && t.edgeBps > 0 ? last / t.edgeBps : null,
+          // Not over an edge under 1 bps: -8 over +0.2 reads as -4000%, which says nothing.
+          kept: priced && last !== null && last !== undefined && t.edgeBps >= 1 ? last / t.edgeBps : null,
         };
       }),
     [trades],
@@ -2036,14 +2038,24 @@ function TradesTable({ id, trades, hz }: { id: string; trades: QuoterTrade[]; hz
         id: "fair",
         header: "Fair",
         size: 96,
+        sortingFn: nullsLast("fair"),
         meta: { label: "Fair", align: "right", title: "The reference mid at the fill", filter: { kind: "range" } } satisfies ColMeta,
-        cell: (c) => <span className="text-faint">{fmtPrice(c.getValue())}</span>,
+        cell: (c) => {
+          const v = c.getValue();
+          return <span className="text-faint">{v === null ? "—" : fmtPrice(v)}</span>;
+        },
       }),
       tradeHelper.accessor("edge", {
         id: "edge",
         header: "Edge",
         size: 76,
-        meta: { label: "Edge", align: "right", title: "bps from fair value in our favor, at the fill", filter: { kind: "range" } } satisfies ColMeta,
+        sortingFn: nullsLast("edge"),
+        meta: {
+          label: "Edge",
+          align: "right",
+          title: "bps from fair value in our favor, at the fill. — when there was no reference price then, and the trade is left out of the averages",
+          filter: { kind: "range" },
+        } satisfies ColMeta,
         cell: (c) => bps(c.getValue()),
       }),
       ...hz.map((h, i) =>

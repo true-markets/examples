@@ -60,3 +60,26 @@ func TestTakeViewSaysWhatsInTheWay(t *testing.T) {
 		t.Fatalf("ready side %+v", view.Sell)
 	}
 }
+
+// A fill with no reference price is kept in the journal but out of the averages, and retention
+// isn't worked out against an edge too small to mean anything.
+func TestJournalUnpricedFillsAndTinyEdge(t *testing.T) {
+	j := NewJournal()
+	m := Market{Symbol: "MUC-USDC", QuoteSymbol: "USDC"}
+	t0 := time.Now().Add(-time.Hour)
+	j.AddUnpriced(m, Fill{Side: Buy, Price: d("100"), Qty: d("1"), Time: t0})
+	// Filled 0.2 bps under fair value, then the market fell 8 bps.
+	j.Add(m, Fill{Side: Buy, Price: d("99.998"), Qty: d("1"), Time: t0}, d("100"))
+	j.Mark("MUC-USDC", d("99.918"), t0.Add(31*time.Second))
+	r := j.Report(0)
+	if len(r.Trades) != 2 || !r.Trades[1].Unpriced || r.Trades[1].Markouts[0] != nil {
+		t.Fatalf("trades %+v", r.Trades)
+	}
+	s := r.Total
+	if s.Trades != 2 || s.Marked[0] != 1 || s.EdgeBps == nil || *s.EdgeBps > 0.3 {
+		t.Fatalf("summary %+v", s)
+	}
+	if s.Markouts[0] == nil || *s.Markouts[0] > -7.9 || s.Retention[0] != nil {
+		t.Fatalf("mark-out %v retention %v: retention over 0.2 bps of edge should be left out", s.Markouts[0], s.Retention[0])
+	}
+}

@@ -788,8 +788,12 @@ func (p *position) apply(side Side, qty, price decimal.Decimal) {
 func (e *Engine) applyFillLocked(f Fill, debit func(assetID string, amount decimal.Decimal)) {
 	e.pos.apply(f.Side, f.Qty, f.Price)
 	e.stats.Fills++
-	if e.journal != nil && e.ref != nil {
+	switch {
+	case e.journal == nil:
+	case e.ref != nil && e.ref.Mid.IsPositive():
 		e.journal.Add(e.market, f, e.ref.Mid)
+	default:
+		e.journal.AddUnpriced(e.market, f) // counted, but with nothing to measure its edge against
 	}
 	if f.Level == TakeLevel {
 		e.stats.TakeFills++

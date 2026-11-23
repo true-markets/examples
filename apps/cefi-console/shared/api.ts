@@ -440,6 +440,8 @@ export interface QuoterTrade {
   refMid: string;
   edgeBps: number;
   markouts: (number | null)[];
+  recovered?: boolean; // filled while the quoter was down: no fair value, left out of the averages
+  unpriced?: boolean; // filled while the book had no reference price: the same
 }
 
 export interface QuoterTradeSummary {

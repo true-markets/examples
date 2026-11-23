@@ -21,7 +21,7 @@ import (
 //   - Retention: mark-out over edge at fill. 100% means the edge held; below 0 means the market
 //     took all of it and more.
 //
-// Kept in memory, for this run only.
+// Saved in the state file with the rest of the desk, so it survives a restart.
 
 // MarkoutHorizons are when each fill is marked again.
 var MarkoutHorizons = []time.Duration{30 * time.Second, 300 * time.Second}
@@ -52,6 +52,9 @@ type Trade struct {
 	// Recovered: filled while the quoter was down, found on the next start. There was no fair
 	// value to measure it against, so it's left out of the edge and mark-out averages.
 	Recovered bool `json:"recovered,omitempty"`
+	// Unpriced: filled while the book had no reference price (just after a start, or with the
+	// sources down). Like a recovered fill, it's counted but left out of the averages.
+	Unpriced bool `json:"unpriced,omitempty"`
 	// resumed is when this run restored the trade: a mark-out that came due before then was
 	// missed, however recently.
 	resumed time.Time
@@ -106,7 +109,12 @@ func (j *Journal) Add(m Market, f Fill, refMid decimal.Decimal) {
 }
 
 // AddRecovered records a fill found after a restart: no fair value at the time, no mark-outs.
-func (j *Journal) AddRecovered(m Market, f Fill) {
+func (j *Journal) AddRecovered(m Market, f Fill) { j.addUnmeasured(m, f, true) }
+
+// AddUnpriced records a fill that came in while the book had no reference price.
+func (j *Journal) AddUnpriced(m Market, f Fill) { j.addUnmeasured(m, f, false) }
+
+func (j *Journal) addUnmeasured(m Market, f Fill, recovered bool) {
 	kind := "maker"
 	if f.Level == TakeLevel {
 		kind = string(f.TakeKind)
@@ -116,8 +124,12 @@ func (j *Journal) AddRecovered(m Market, f Fill) {
 	j.nextID++
 	j.trades = append(j.trades, &Trade{
 		ID: j.nextID, Time: f.Time, Symbol: m.Symbol, Quote: m.QuoteSymbol, Side: f.Side, Kind: kind, Level: f.Level,
-		Qty: f.Qty, Price: f.Price, Notional: f.Qty.Mul(f.Price), Markouts: make([]*float64, len(MarkoutHorizons)), Recovered: true,
+		Qty: f.Qty, Price: f.Price, Notional: f.Qty.Mul(f.Price), Markouts: make([]*float64, len(MarkoutHorizons)),
+		Recovered: recovered, Unpriced: !recovered,
 	})
+	if t := j.trades[len(j.trades)-1]; t.Time.IsZero() {
+		t.Time = time.Now()
+	}
 	if len(j.trades) > journalSize {
 		j.trades = j.trades[len(j.trades)-journalSize:]
 	}
@@ -149,7 +161,7 @@ func (j *Journal) Restore(s JournalState, now time.Time) {
 		}
 		t.resumed = now
 		j.trades = append(j.trades, &t)
-		if t.Recovered {
+		if t.Recovered || t.Unpriced {
 			continue
 		}
 		for k, h := range MarkoutHorizons {
@@ -195,6 +207,10 @@ func (j *Journal) Mark(symbol string, mid decimal.Decimal, now time.Time) {
 	}
 	j.pending[symbol] = keep
 }
+
+// minRetentionEdgeBps is the least edge at fill that retention is worked out against. Below it the
+// ratio means nothing: -8 bps over +0.2 bps reads as -4000%.
+const minRetentionEdgeBps = 1.0
 
 // TradeSummary rolls trades up, for one book or all of them. Averages are weighted by notional,
 // and each mark-out average only counts trades whose mark-out is in.
@@ -254,7 +270,7 @@ func summarize(symbol string, trades []*Trade, horizons []int) TradeSummary {
 	for _, t := range trades {
 		s.ByKind[t.Kind]++
 		s.Notional = s.Notional.Add(t.Notional)
-		if t.Recovered {
+		if t.Recovered || t.Unpriced {
 			continue // no fair value to measure it against
 		}
 		notional := t.Notional.InexactFloat64()
@@ -281,7 +297,7 @@ func summarize(symbol string, trades []*Trade, horizons []int) TradeSummary {
 		}
 		m, e, p := markW[i]/markN[i], edgeAtMark[i]/markN[i], pnl[i]
 		s.Markouts[i], s.MarkedPnl[i] = &m, &p
-		if e > 0 {
+		if e >= minRetentionEdgeBps {
 			r := m / e
 			s.Retention[i] = &r
 		}

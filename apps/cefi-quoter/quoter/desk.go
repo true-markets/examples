@@ -108,8 +108,11 @@ type deskBook struct {
 	flagged map[string]string
 	// resting is what the last run left resting on this book, until RecoverMissedFills checks it.
 	resting []OrderState
-	cancel  context.CancelFunc
-	done    chan struct{}
+	// since is when the blend was set: for blendWarmup after it, the book waits for every
+	// weighted source rather than quote off the first one to speak.
+	since  time.Time
+	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 func NewDesk(cfg DeskConfig) *Desk {
@@ -189,7 +192,7 @@ func (d *Desk) Add(ctx context.Context, symbol string, blend *reference.BlendCon
 		return Market{}, fmt.Errorf("%s is already added", symbol)
 	}
 	d.ledger.Register(book, l.BaseAssetID, l.QuoteAssetID)
-	db := &deskBook{engine: e, blend: cfg, flagged: map[string]string{}}
+	db := &deskBook{engine: e, blend: cfg, flagged: map[string]string{}, since: time.Now()}
 	d.restoreBookLocked(db, symbol)
 	d.books[symbol] = db
 	d.byInstrument[l.InstrumentID] = e
@@ -283,6 +286,7 @@ func (d *Desk) SetBlend(ctx context.Context, symbol string, blend reference.Blen
 	}
 	db.blend = cfg
 	db.flagged = map[string]string{}
+	db.since = time.Now()
 	e := db.engine
 	d.mu.Unlock()
 	e.mu.Lock()
@@ -632,9 +636,13 @@ func (d *Desk) reprice(symbol string, heartbeat bool) {
 		d.mu.Unlock()
 		return
 	}
-	cfg, latest, e := db.blend, d.latestLocked(db.blend), db.engine
+	cfg, latest, e, since := db.blend, d.latestLocked(db.blend), db.engine, db.since
 	d.mu.Unlock()
-	view := reference.Evaluate(cfg, latest, time.Now(), time.Duration(e.Params().RefStaleMs)*time.Millisecond)
+	now := time.Now()
+	view := reference.Evaluate(cfg, latest, now, time.Duration(e.Params().RefStaleMs)*time.Millisecond)
+	if wait := warmingUp(view, since, now); wait != "" {
+		view.Mid, view.Problem = nil, wait
+	}
 
 	d.mu.Lock()
 	db.view = view
@@ -679,6 +687,30 @@ func (d *Desk) reprice(symbol string, heartbeat bool) {
 	if d.cfg.OnReference != nil && !heartbeat {
 		d.cfg.OnReference(symbol, t)
 	}
+}
+
+// blendWarmup is how long after a start (or a change of sources) a book waits for every weighted
+// source to report before it prices off the ones that have. The sources connect one at a time, and
+// they rarely agree to the bps: a price from the first alone can sit several bps from the full
+// blend, and quotes around it get picked off as the rest arrive.
+const blendWarmup = 10 * time.Second
+
+// warmingUp says why a blend with a price shouldn't be used yet ("" if it should): within
+// blendWarmup of since, while a weighted source has no price at all.
+func warmingUp(v reference.BlendView, since, now time.Time) string {
+	if v.Mid == nil || now.Sub(since) >= blendWarmup {
+		return ""
+	}
+	var missing []string
+	for _, s := range v.Sources {
+		if s.Weight > 0 && s.State == "waiting" {
+			missing = append(missing, s.Name)
+		}
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("waiting up to %s for %s before pricing off the rest", (blendWarmup - now.Sub(since)).Round(time.Second), strings.Join(missing, ", "))
 }
 
 // BookStatus is one book in full, with its reference blend.

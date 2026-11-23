@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/true-markets/examples/apps/cefi-quoter/reference"
 )
@@ -85,5 +86,38 @@ func TestReferenceGuardStopsQuotingWhenTheBookTradesThroughTheReference(t *testi
 	waitFor(t, "pulled by the guard", func() bool { return fx.resting("") == 0 })
 	if s := e.Status(); !strings.Contains(s.Reason, "reference guard") {
 		t.Fatalf("reason %q", s.Reason)
+	}
+}
+
+// Just after a start the sources connect one at a time. The book doesn't price off the first one
+// to speak: it waits for the rest, up to blendWarmup, then prices off the ones that came.
+func TestBlendWaitsForEverySourceAfterAStart(t *testing.T) {
+	fx := newFake(map[string]string{"btc": "1", "usdc": "100000"})
+	desk := startDesk(t, fx)
+	addBook(t, desk, "BTC-USDC", testParams())
+	blend := reference.BlendConfig{Sources: []reference.Source{{Ref: "BTC-USD", Weight: 1}, {Ref: "kraken:BTC/USD", Weight: 1}}}
+	if _, err := desk.SetBlend(context.Background(), "BTC-USDC", blend); err != nil {
+		t.Fatal(err)
+	}
+	tick(desk, "BTC-USD", "50000")
+	s, _ := desk.BookStatus("BTC-USDC")
+	if s.Reference != nil || !strings.Contains(s.Blend.Problem, "Kraken") {
+		t.Fatalf("priced off one source of two: reference %+v problem %q", s.Reference, s.Blend.Problem)
+	}
+	tick(desk, "kraken:BTC/USD", "50010")
+	s, _ = desk.BookStatus("BTC-USDC")
+	if s.Reference == nil || !s.Reference.Mid.Equal(d("50005")) {
+		t.Fatalf("reference %+v once both sources are in", s.Reference)
+	}
+
+	// Past the warm-up, a source that never came is left out.
+	now := time.Now()
+	mid := d("50000")
+	view := reference.BlendView{Mid: &mid, Sources: []reference.SourceView{{Name: "a", Weight: 1, State: "in"}, {Name: "b", Weight: 1, State: "waiting"}}}
+	if warmingUp(view, now.Add(-blendWarmup+time.Second), now) == "" {
+		t.Fatal("should wait within the warm-up")
+	}
+	if w := warmingUp(view, now.Add(-blendWarmup), now); w != "" {
+		t.Fatalf("still waiting after the warm-up: %q", w)
 	}
 }
