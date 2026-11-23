@@ -121,7 +121,7 @@ The order of the requests matters as much as the kind. A plan goes out as cancel
 
 ### Staying under the rate limit
 
-The exchange limits order requests per account, so every book shares one budget (`quoter/pacer.go`): `ORDER_RATE_LIMIT` requests a second on average, in bursts of up to twice that. A book that runs out mid-round stops there and plans again on its next cycle, with fresh prices, rather than queueing requests that would be stale by the time they went out. The plan's order makes any cut-off point safe: cancels and modifies that free funds go first.
+The exchange limits order requests per account, so every book shares one budget (`quoter/pacer.go`): no more than `ORDER_RATE_LIMIT` requests in any one second, counted back from each send. Leave some room under the exchange's limit: requests spaced out here can still arrive bunched together at the exchange. A book that runs out mid-round stops there and plans again on its next cycle, with fresh prices, rather than queueing requests that would be stale by the time they went out. The plan's order makes any cut-off point safe: cancels and modifies that free funds go first.
 
 If the exchange rejects a request for its rate limit anyway ("Rate limit exceeded" over FIX, a 429 over REST), every book stops sending for a second, and its state reads "rate limited". Resting quotes stay where they are, since pulling them would take requests the limit doesn't have. Another rate-limit reject within 30s of the last pause doubles it, up to 30s. Rejects for requests already on the wire land during the pause and neither extend it nor fill the events: each pause is one event.
 

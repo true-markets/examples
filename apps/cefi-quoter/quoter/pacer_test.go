@@ -27,24 +27,36 @@ func takeN(p *Pacer, n int) int {
 	return got
 }
 
-func TestPacerBucket(t *testing.T) {
+// No one-second window, however it lines up, ever holds more than the limit.
+func TestPacerWindow(t *testing.T) {
 	p := NewPacer(10)
 	now := fakeClock(p)
-	if got := takeN(p, 50); got != 20 {
-		t.Fatalf("burst: %d, want 20 (twice the rate)", got)
+	start := *now
+	var sent []time.Time
+	for i := range 3000 { // 3s in 1ms steps, asking every step
+		*now = start.Add(time.Duration(i) * time.Millisecond)
+		if p.Take() {
+			sent = append(sent, *now)
+		}
 	}
-	*now = now.Add(300 * time.Millisecond)
-	if got := takeN(p, 50); got != 3 {
-		t.Fatalf("after 300ms at 10/s: %d, want 3", got)
+	for i := range sent {
+		n := 0
+		for _, s := range sent[i:] {
+			if s.Sub(sent[i]) < time.Second {
+				n++
+			}
+		}
+		if n > 10 {
+			t.Fatalf("%d requests in the second from %s", n, sent[i].Sub(start))
+		}
 	}
-	*now = now.Add(time.Minute)
-	if got := takeN(p, 50); got != 20 {
-		t.Fatalf("refill caps at the burst: %d", got)
+	if len(sent) != 30 {
+		t.Fatalf("%d sent in 3s, want 30", len(sent))
 	}
 }
 
 func TestPacerPausesOnRateLimitAndBacksOff(t *testing.T) {
-	p := NewPacer(0) // no bucket: only the pause
+	p := NewPacer(0) // no window: only the pause
 	now := fakeClock(p)
 	if !p.Take() {
 		t.Fatal("unlimited pacer refused")
@@ -78,19 +90,16 @@ func TestPacerPausesOnRateLimitAndBacksOff(t *testing.T) {
 	}
 }
 
-func TestPacerAfterPauseStartsEmpty(t *testing.T) {
+func TestPacerAfterPauseKeepsTheLimit(t *testing.T) {
 	p := NewPacer(10)
 	now := fakeClock(p)
 	p.Limited()
-	*now = now.Add(time.Second)
-	// The bucket refills from the end of the pause, not from before it: no full burst straight
-	// back into the limit.
 	if got := takeN(p, 50); got != 0 {
-		t.Fatalf("right after the pause: %d", got)
+		t.Fatalf("during the pause: %d", got)
 	}
-	*now = now.Add(500 * time.Millisecond)
-	if got := takeN(p, 50); got != 5 {
-		t.Fatalf("500ms after the pause: %d", got)
+	*now = now.Add(time.Second)
+	if got := takeN(p, 50); got != 10 {
+		t.Fatalf("after the pause: %d, want the limit", got)
 	}
 }
 
@@ -108,13 +117,13 @@ func TestRateLimitRejectText(t *testing.T) {
 	}
 }
 
-// Every book draws on one pacer: with room for 4 requests, two books asking for 6 each send 4
-// between them at first, then the rest as it refills.
+// Every book draws on one pacer: with room for 3 requests a second, two books asking for 6 each
+// send 3 between them in the first second, then 3 more in the next.
 func TestBooksShareThePacer(t *testing.T) {
 	fx := newFake(map[string]string{"btc": "1", "eth": "10", "usdc": "100000"})
 	desk := NewDesk(DeskConfig{
 		Mode: "paper", Environment: "test", IDPrefix: "cq", Defaults: testParams(), Catalog: testCatalog,
-		Venue: fx, NewTransport: fx.transport, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), OrderRate: 2,
+		Venue: fx, NewTransport: fx.transport, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), OrderRate: 3,
 	})
 	fx.desk = desk
 	ctx, cancel := context.WithCancel(context.Background())
@@ -133,10 +142,10 @@ func TestBooksShareThePacer(t *testing.T) {
 		desk.Engine(s).SetEnabled(true)
 	}
 	time.Sleep(300 * time.Millisecond)
-	if n := fx.counts()["create"]; n != 4 {
-		t.Fatalf("%d creates in the first 300ms, want the burst of 4", n)
+	if n := fx.counts()["create"]; n != 3 {
+		t.Fatalf("%d creates in the first 300ms, want the limit of 3", n)
 	}
-	waitFor(t, "a few more as the bucket refills", func() bool { return fx.counts()["create"] >= 6 })
+	waitFor(t, "three more the next second", func() bool { return fx.counts()["create"] >= 6 })
 }
 
 // A rate-limit reject pauses every book, says so once, and leaves the resting quotes alone.

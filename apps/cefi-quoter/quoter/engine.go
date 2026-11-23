@@ -703,7 +703,14 @@ func (e *Engine) cancelOrphans(ctx context.Context) {
 	orphans := e.orphans
 	e.orphans = nil
 	e.mu.Unlock()
-	for _, id := range orphans {
+	for i, id := range orphans {
+		if !e.pacer.Take() {
+			// The rest wait for the next cycle, like any other request over the limit.
+			e.mu.Lock()
+			e.orphans = append(e.orphans, orphans[i:]...)
+			e.mu.Unlock()
+			return
+		}
 		e.log.Warn("canceling an order of ours we weren't tracking", "external_id", id)
 		_ = e.tx.Cancel(ctx, id, e.book.NewID(), id)
 	}

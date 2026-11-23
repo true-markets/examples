@@ -14,19 +14,19 @@ import (
 // exchange's rate limit. The desk has one, because the limit is per account, not per book.
 //
 // Two parts:
-//   - A token bucket: rate requests a second on average, bursts up to twice that. A book that
-//     finds it empty stops sending for this cycle and plans again on the next one, with fresh
-//     prices, rather than queueing requests that would be stale by the time they went out.
+//   - A rolling window: no more than limit requests in any one second, counted back from now. (A
+//     token bucket would average the limit but let a burst through on top of it, and the
+//     exchange counts the burst.) A book that finds the window full stops sending for this cycle
+//     and plans again on the next one, with fresh prices, rather than queueing requests that
+//     would be stale by the time they went out.
 //   - A pause: when the exchange rejects a request for its rate limit anyway, every book stops
 //     sending for a second. Another rate-limit reject within 30s of the last pause doubles it,
 //     up to 30s. Rejects from requests already on the wire land during the pause and don't
 //     extend it.
 type Pacer struct {
 	mu          sync.Mutex
-	rate        float64 // tokens a second; 0 for no bucket
-	burst       float64
-	tokens      float64
-	filled      time.Time
+	limit       int         // requests in any one second; 0 for no window
+	sent        []time.Time // when the last limit requests went out, oldest first
 	pausedUntil time.Time
 	pause       time.Duration
 	lastLimited time.Time
@@ -46,7 +46,7 @@ func (p *Pacer) Status() RateLimitStatus {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	s := RateLimitStatus{PerSec: int(p.rate), PausedForMs: max(0, p.pausedUntil.Sub(p.now()).Milliseconds())}
+	s := RateLimitStatus{PerSec: p.limit, PausedForMs: max(0, p.pausedUntil.Sub(p.now()).Milliseconds())}
 	if !p.lastLimited.IsZero() {
 		t := p.lastLimited
 		s.LastAt = &t
@@ -61,13 +61,7 @@ const (
 
 // NewPacer allows perSec requests a second. 0 or less leaves only the pause on rate-limit rejects.
 func NewPacer(perSec int) *Pacer {
-	p := &Pacer{now: time.Now}
-	if perSec > 0 {
-		p.rate = float64(perSec)
-		p.burst = 2 * p.rate
-		p.tokens = p.burst
-	}
-	return p
+	return &Pacer{now: time.Now, limit: max(0, perSec)}
 }
 
 // Take spends one request. False means don't send it now.
@@ -81,17 +75,16 @@ func (p *Pacer) Take() bool {
 	if now.Before(p.pausedUntil) {
 		return false
 	}
-	if p.rate == 0 {
+	if p.limit == 0 {
 		return true
 	}
-	if !p.filled.IsZero() {
-		p.tokens = min(p.burst, p.tokens+now.Sub(p.filled).Seconds()*p.rate)
+	if len(p.sent) == p.limit {
+		if now.Sub(p.sent[0]) < time.Second {
+			return false
+		}
+		p.sent = p.sent[1:]
 	}
-	p.filled = now
-	if p.tokens < 1 {
-		return false
-	}
-	p.tokens--
+	p.sent = append(p.sent, now)
 	return true
 }
 
@@ -114,8 +107,6 @@ func (p *Pacer) Limited() time.Duration {
 		p.pause = min(2*p.pause, pauseMax)
 	}
 	p.pausedUntil = now.Add(p.pause)
-	p.tokens = 0
-	p.filled = p.pausedUntil
 	return p.pause
 }
 
