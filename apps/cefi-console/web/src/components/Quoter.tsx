@@ -282,7 +282,10 @@ function DeskBar({ d, stale, help, onHelp }: { d: QuoterDeskStatus; stale: boole
         <CircleHelp size={12} className={help ? "text-info" : undefined} /> Help {help ? "on" : "off"}
       </Button>
       {stale && <span className="text-[11px] text-sell">· lost contact with the quoter, showing the last status</span>}
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex items-center gap-3">
+        <span className="num text-xs">
+          <RateLimitItem d={d} />
+        </span>
         {d.books.some((b) => !b.enabled) && (
           <Button disabled={control.isPending} onClick={() => (live ? setConfirm(true) : control.mutate({ action: "start" }))}>
             <Play size={12} /> Start all
@@ -1569,7 +1572,6 @@ function ActivityBar({ d, open, onToggle }: { d: QuoterDeskStatus; open: boolean
           </Fragment>
         );
       })}
-      <RateLimitItem d={d} />
     </SummaryBar>
   );
 }
