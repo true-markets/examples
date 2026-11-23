@@ -243,6 +243,12 @@ export interface QuoterParamsResponse {
   schema: QuoterParamSpec[];
 }
 
+// The quoter-wide settings (not any one book's), with the same kind of schema as a book's parameters.
+export interface QuoterSettingsResponse {
+  settings: QuoterParams;
+  schema: QuoterParamSpec[];
+}
+
 export interface QuoterConn {
   up: boolean;
   reason?: string;

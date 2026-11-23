@@ -67,10 +67,13 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	saved, dropped, err := loadBooks(cfg.BooksFile, cfg.Params)
+	// Rate limits saved from the management API win over .env's.
+	settings := quoter.Settings{OrderRate: cfg.OrderRate, OrderRatePerMin: cfg.OrderRatePerMin}
+	saved, dropped, err := loadBooks(cfg.BooksFile, cfg.Params, &settings)
 	if err != nil {
 		return err
 	}
+	cfg.OrderRate, cfg.OrderRatePerMin = settings.OrderRate, settings.OrderRatePerMin
 	for _, w := range dropped {
 		log.Warn(w) // the file is rewritten without it the next time a book changes
 	}
@@ -143,7 +146,7 @@ func run() error {
 	}
 	dc.Catalog = stockReferences(ctx, catalogURL, dc.Catalog, log)
 	dc.Log = log
-	dc.Save = func(b map[string]quoter.BookConfig) error { return saveBooks(cfg.BooksFile, b) }
+	dc.Save = func(b map[string]quoter.BookConfig, s quoter.Settings) error { return saveBooks(cfg.BooksFile, b, s) }
 	dc.SaveState = func(s quoter.State) error {
 		f := stateFile{State: s}
 		if paperX != nil {

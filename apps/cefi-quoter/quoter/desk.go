@@ -67,8 +67,9 @@ type DeskConfig struct {
 	// OnReference sees every book's blended reference price (the paper exchange fills from it).
 	// Optional.
 	OnReference func(symbol string, t reference.Tick)
-	// Save stores the books after any change, so they come back on the next start. Optional.
-	Save func(map[string]BookConfig) error
+	// Save stores the books and the quoter-wide settings after any change, so they come back on
+	// the next start. Optional.
+	Save func(map[string]BookConfig, Settings) error
 	// SaveState stores position, PnL, activity and the trade journal, so a restart picks up where
 	// this run left off (see state.go). Optional.
 	SaveState func(State) error
@@ -467,6 +468,37 @@ func (d *Desk) UpdateParams(symbol string, patch []byte) (Params, error) {
 	return p, err
 }
 
+func (d *Desk) settingsLocked() Settings {
+	return Settings{OrderRate: d.cfg.OrderRate, OrderRatePerMin: d.cfg.OrderRatePerMin}
+}
+
+// Settings are the quoter-wide settings in force.
+func (d *Desk) Settings() Settings {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.settingsLocked()
+}
+
+// UpdateSettings applies a partial JSON update to the quoter-wide settings, puts it in force and
+// saves it.
+func (d *Desk) UpdateSettings(patch []byte) (Settings, error) {
+	d.mu.Lock()
+	cur := d.settingsLocked()
+	next, err := cur.Merge(patch)
+	if err != nil {
+		d.mu.Unlock()
+		return cur, err
+	}
+	d.cfg.OrderRate, d.cfg.OrderRatePerMin = next.OrderRate, next.OrderRatePerMin
+	d.pacer.SetLimits(next.OrderRate, next.OrderRatePerMin)
+	d.mu.Unlock()
+	if next != cur {
+		d.log.Info("quoter settings changed", "orderRateLimit", next.OrderRate, "orderRateLimitPerMin", next.OrderRatePerMin)
+	}
+	d.save()
+	return next, nil
+}
+
 // SetEnabled starts or stops every book.
 func (d *Desk) SetEnabled(on bool) {
 	for _, e := range d.engines() {
@@ -484,8 +516,9 @@ func (d *Desk) save() {
 		b := db.blend
 		out[sym] = BookConfig{Blend: &b, Params: db.engine.Params()}
 	}
+	settings := d.settingsLocked()
 	d.mu.Unlock()
-	if err := d.cfg.Save(out); err != nil {
+	if err := d.cfg.Save(out, settings); err != nil {
 		d.log.Warn("saving books failed", "err", err)
 	}
 }

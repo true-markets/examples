@@ -36,6 +36,7 @@ import { createColumnHelper, type ColumnDef, type ColumnFiltersState } from "@ta
 import { DataTable, type ColMeta } from "../table/DataTable.tsx";
 import { useUi } from "../ui-state.tsx";
 import { BulkParams } from "./BulkParams.tsx";
+import { QuoterSettings } from "./QuoterSettings.tsx";
 import { Stack } from "./Balances.tsx";
 import { ago, price as fmtPrice, qty as fmtQty, quoteUnit, usd as fmtUsd } from "../format.ts";
 import { kindFacets, matchesKind } from "../trade-kinds.ts";
@@ -132,8 +133,11 @@ export function QuoterScreen() {
                   </div>
                 )}
                 {shownOpen === "params" && (
-                  <div className="min-h-0 flex-1">
-                    <BulkParams d={desk} />
+                  <div className="flex min-h-0 flex-1 flex-col gap-2">
+                    <QuoterSettings />
+                    <div className="min-h-0 flex-1">
+                      <BulkParams d={desk} />
+                    </div>
                   </div>
                 )}
                 {/* Hidden, not unmounted, under a breakdown: closing it brings the book back as it was. */}

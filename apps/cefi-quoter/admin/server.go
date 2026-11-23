@@ -68,6 +68,23 @@ func Handler(d *quoter.Desk, token string, log *slog.Logger) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, d.Trades(limit))
 	})
+	mux.HandleFunc("GET /api/settings", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"settings": d.Settings(), "schema": quoter.SettingsSchema()})
+	})
+	mux.HandleFunc("PATCH /api/settings", func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<16))
+		if err != nil {
+			fail(w, http.StatusBadRequest, err)
+			return
+		}
+		s, err := d.UpdateSettings(body)
+		if err != nil {
+			fail(w, http.StatusBadRequest, err)
+			return
+		}
+		log.Info("quoter settings changed over the management API", "from", r.RemoteAddr)
+		writeJSON(w, http.StatusOK, map[string]any{"settings": s, "schema": quoter.SettingsSchema()})
+	})
 	mux.HandleFunc("GET /api/rejects", func(w http.ResponseWriter, r *http.Request) {
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 		if limit <= 0 || limit > 5000 {

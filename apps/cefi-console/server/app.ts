@@ -112,6 +112,14 @@ export function createApp(backend: Backend, quoter?: QuoterClient): Hono {
   );
   app.get("/api/quoter/books/:symbol", async (c) => c.json(await needQuoter().book(bookSymbol(c.req.param("symbol")))));
   app.delete("/api/quoter/books/:symbol", async (c) => c.json(await needQuoter().removeBook(bookSymbol(c.req.param("symbol")))));
+  app.get("/api/quoter/settings", async (c) => c.json(await needQuoter().settings()));
+  app.patch("/api/quoter/settings", async (c) => {
+    const body = await json<Record<string, unknown>>(c);
+    if (typeof body !== "object" || body === null || Array.isArray(body) || Object.keys(body).length === 0) {
+      throw new TmError("send an object of the settings to change", 400);
+    }
+    return c.json(await needQuoter().updateSettings(body));
+  });
   app.get("/api/quoter/books/:symbol/params", async (c) => c.json(await needQuoter().params(bookSymbol(c.req.param("symbol")))));
   app.patch("/api/quoter/books/:symbol/params", async (c) => {
     const body = await json<Record<string, unknown>>(c);

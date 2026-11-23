@@ -20,6 +20,7 @@ import type {
   QuoterSource,
   QuoterStatus,
   QuoterReject,
+  QuoterSettingsResponse,
   QuoterTradesReport,
   Session,
 } from "../../shared/api.ts";
@@ -277,6 +278,15 @@ export const useQuoterBook = (symbol: string | undefined) =>
 
 export const useQuoterParams = (symbol: string | undefined) =>
   useQuery({ queryKey: ["quoter-params", symbol], queryFn: () => call<QuoterParamsResponse>("GET", `${bookPath(symbol!)}/params`), enabled: !!symbol, retry: false });
+
+export const useQuoterSettings = (enabled: boolean) =>
+  useQuery({ queryKey: ["quoter-settings"], queryFn: () => call<QuoterSettingsResponse>("GET", "/api/quoter/settings"), enabled, retry: false });
+
+export const useUpdateQuoterSettings = () =>
+  useAction((patch: QuoterParams) => call<QuoterSettingsResponse>("PATCH", "/api/quoter/settings", patch), {
+    success: (_r, patch) => `Quoter: set ${Object.keys(patch).join(", ")}`,
+    invalidate: ["quoter-settings", "quoter-status"],
+  });
 
 export const useUpdateQuoterParams = () =>
   useAction(({ symbol, patch }: { symbol: string; patch: QuoterParams }) => call<{ params: QuoterParams }>("PATCH", `${bookPath(symbol)}/params`, patch), {

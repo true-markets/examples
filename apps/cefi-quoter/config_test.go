@@ -39,24 +39,29 @@ func TestEnvExampleLoads(t *testing.T) {
 	p := cfg.Params
 	p.SpreadBps = 25
 	saved["BTC-USDC"] = quoter.BookConfig{Params: p}
-	if err := saveBooks(cfg.BooksFile, saved); err != nil {
+	if err := saveBooks(cfg.BooksFile, saved, quoter.Settings{OrderRate: 40, OrderRatePerMin: 900}); err != nil {
 		t.Fatal(err)
 	}
-	books, _, err := loadBooks(cfg.BooksFile, cfg.Params)
+	// Saved settings win over .env's.
+	settings := quoter.Settings{OrderRate: cfg.OrderRate, OrderRatePerMin: cfg.OrderRatePerMin}
+	books, _, err := loadBooks(cfg.BooksFile, cfg.Params, &settings)
 	if err != nil || len(books) != 2 || books[0].Symbol != "BTC-USDC" || books[0].Params.SpreadBps != 25 || books[0].Blend != nil || books[1].Blend.Sources[0].Ref != "ETH-USD" {
 		t.Fatalf("%+v %v", books, err)
+	}
+	if settings.OrderRate != 40 || settings.OrderRatePerMin != 900 {
+		t.Fatalf("settings %+v", settings)
 	}
 	// A book saved before blends named one reference; it reads as a blend of that source.
 	if err := os.WriteFile(cfg.BooksFile, []byte(`{"books": {"ETH-USDC": {"reference": "ETH-USD"}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if books, _, err := loadBooks(cfg.BooksFile, cfg.Params); err != nil || books[0].Blend == nil || len(books[0].Blend.Sources) != 1 || books[0].Blend.Sources[0].Ref != "ETH-USD" {
+	if books, _, err := loadBooks(cfg.BooksFile, cfg.Params, &quoter.Settings{}); err != nil || books[0].Blend == nil || len(books[0].Blend.Sources) != 1 || books[0].Blend.Sources[0].Ref != "ETH-USD" {
 		t.Fatalf("%+v %v", books, err)
 	}
 	if err := os.WriteFile(cfg.BooksFile, []byte(`{"books": {"BTC-USDC": {"params": {"spredBps": 1}}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := loadBooks(cfg.BooksFile, cfg.Params); err == nil {
+	if _, _, err := loadBooks(cfg.BooksFile, cfg.Params, &quoter.Settings{}); err == nil {
 		t.Fatal("a misspelled setting in the books file should be an error")
 	}
 
@@ -65,7 +70,7 @@ func TestEnvExampleLoads(t *testing.T) {
 	if err := os.WriteFile(cfg.BooksFile, []byte(`{"books": {"BTC-USDC": {"params": {"quoteSize": "0.0001"}}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if books, _, err := loadBooks(cfg.BooksFile, cfg.Params); err != nil || books[0].Params.SizeUnit != quoter.SizeInBase || cfg.Params.SizeUnit != quoter.SizeInQuote {
+	if books, _, err := loadBooks(cfg.BooksFile, cfg.Params, &quoter.Settings{}); err != nil || books[0].Params.SizeUnit != quoter.SizeInBase || cfg.Params.SizeUnit != quoter.SizeInQuote {
 		t.Fatalf("%+v %v", books, err)
 	}
 
@@ -74,7 +79,7 @@ func TestEnvExampleLoads(t *testing.T) {
 	if err := os.WriteFile(cfg.BooksFile, []byte(`{"books": {"GOOGLC-USDC": {"params": {"quoteSize": "0.008", "maxBaseAllocUsd": "100"}}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	books, dropped, err := loadBooks(cfg.BooksFile, cfg.Params)
+	books, dropped, err := loadBooks(cfg.BooksFile, cfg.Params, &quoter.Settings{})
 	if err != nil || len(books) != 1 || !books[0].Params.QuoteSize.Equal(decimal.RequireFromString("0.008")) || len(dropped) != 1 || !strings.Contains(dropped[0], "maxBaseAllocUsd (100)") {
 		t.Fatalf("%+v %v %v", books, dropped, err)
 	}
@@ -84,7 +89,7 @@ func TestEnvExampleLoads(t *testing.T) {
 	if err := os.WriteFile(cfg.BooksFile, []byte(`{"books": {"BTC-USDC": {"params": {"sizeUnit": "base", "quoteSize": "0.001", "maxPosition": "0.004"}}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if books, _, err := loadBooks(cfg.BooksFile, cfg.Params); err != nil || !books[0].Params.TakeMaxSize.Equal(decimal.RequireFromString("0.004")) {
+	if books, _, err := loadBooks(cfg.BooksFile, cfg.Params, &quoter.Settings{}); err != nil || !books[0].Params.TakeMaxSize.Equal(decimal.RequireFromString("0.004")) {
 		t.Fatalf("take size %v %v", books, err)
 	}
 	if !cfg.Params.TakeMaxSize.Equal(decimal.NewFromInt(20)) || !cfg.Params.ProfitTaker || cfg.Params.Takeout {

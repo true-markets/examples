@@ -118,6 +118,16 @@ func NewPacer(perSec, perMin int) *Pacer {
 	}
 }
 
+// SetLimits changes the limits from now on. What was already sent still counts against them.
+func (p *Pacer) SetLimits(perSec, perMin int) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sec.limit, p.min.limit = max(0, perSec), max(0, perMin)
+}
+
 // Take spends one new order, modify or take. False means don't send it now. Cancels don't call it:
 // the exchange neither counts nor refuses them.
 func (p *Pacer) Take() bool {

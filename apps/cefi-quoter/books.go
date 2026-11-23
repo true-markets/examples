@@ -29,10 +29,14 @@ import (
 //	  }
 //	}
 //
+// The quoter-wide settings (the order rate limits) are saved under "settings" beside "books", and
+// win over .env's ORDER_RATE_LIMIT and ORDER_RATE_LIMIT_PER_MIN.
+//
 // A book with no blend uses the listing's default reference. "reference": "ETH-USD", from before
 // blends, still reads as a blend of that one source.
 type booksFile struct {
-	Books map[string]bookEntry `json:"books"`
+	Books    map[string]bookEntry `json:"books"`
+	Settings json.RawMessage      `json:"settings,omitempty"` // the quoter-wide settings, over .env's
 }
 
 type bookEntry struct {
@@ -56,8 +60,8 @@ var retired = map[string]string{
 }
 
 // loadBooks reads the books file. A missing file means no books yet. warnings name any retired
-// settings it dropped.
-func loadBooks(path string, defaults quoter.Params) (books []savedBook, warnings []string, err error) {
+// settings it dropped. settings is the quoter-wide settings: the file's over these defaults.
+func loadBooks(path string, defaults quoter.Params, settings *quoter.Settings) (books []savedBook, warnings []string, err error) {
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil, nil
@@ -68,6 +72,11 @@ func loadBooks(path string, defaults quoter.Params) (books []savedBook, warnings
 	var f booksFile
 	if err := json.Unmarshal(raw, &f); err != nil {
 		return nil, nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if len(f.Settings) > 0 {
+		if *settings, err = settings.Merge(f.Settings); err != nil {
+			return nil, nil, fmt.Errorf("%s: settings: %w", path, err)
+		}
 	}
 	var out []savedBook
 	for sym, b := range f.Books {
@@ -112,10 +121,11 @@ func loadBooks(path string, defaults quoter.Params) (books []savedBook, warnings
 
 // saveBooks writes the books file in one step (write a temporary file, then rename), so a crash
 // mid-write never leaves half a file.
-func saveBooks(path string, books map[string]quoter.BookConfig) error {
+func saveBooks(path string, books map[string]quoter.BookConfig, settings quoter.Settings) error {
 	f := struct {
-		Books map[string]quoter.BookConfig `json:"books"`
-	}{Books: books}
+		Books    map[string]quoter.BookConfig `json:"books"`
+		Settings quoter.Settings              `json:"settings"`
+	}{Books: books, Settings: settings}
 	raw, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return err

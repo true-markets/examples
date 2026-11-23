@@ -57,6 +57,15 @@ export class QuoterClient {
     return this.call("GET", `/api/books/${encodeURIComponent(symbol)}/params`);
   }
 
+  // The quoter-wide settings (rate limits) and their schema.
+  settings(): Promise<unknown> {
+    return this.call("GET", "/api/settings");
+  }
+
+  updateSettings(patch: Record<string, unknown>): Promise<unknown> {
+    return this.call("PATCH", "/api/settings", patch);
+  }
+
   updateParams(symbol: string, patch: Record<string, unknown>): Promise<unknown> {
     return this.call("PATCH", `/api/books/${encodeURIComponent(symbol)}/params`, patch);
   }

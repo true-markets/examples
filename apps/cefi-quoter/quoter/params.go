@@ -85,9 +85,11 @@ type ParamSpec struct {
 }
 
 // Schema lists every parameter, in declaration order.
-func Schema() []ParamSpec {
+func Schema() []ParamSpec { return schemaOf(reflect.TypeFor[Params]()) }
+
+// schemaOf reads the `param` tags of a settings struct.
+func schemaOf(t reflect.Type) []ParamSpec {
 	var out []ParamSpec
-	t := reflect.TypeFor[Params]()
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		parts := strings.Split(f.Tag.Get("param"), "|")
@@ -126,8 +128,18 @@ func parseBound(s string) *float64 {
 
 // Validate checks every value against its schema bounds and the few rules that span fields.
 func (p Params) Validate() error {
-	v := reflect.ValueOf(p)
-	for i, spec := range Schema() {
+	if err := validateFields(reflect.ValueOf(p), Schema()); err != nil {
+		return err
+	}
+	if !p.QuoteSize.IsPositive() {
+		return fmt.Errorf("quoteSize must be more than 0")
+	}
+	return nil
+}
+
+// validateFields checks each field of a settings struct against its spec.
+func validateFields(v reflect.Value, specs []ParamSpec) error {
+	for i, spec := range specs {
 		f := v.Field(i)
 		var x float64
 		switch spec.Type {
@@ -155,26 +167,13 @@ func (p Params) Validate() error {
 			return fmt.Errorf("%s must be at most %v", spec.Key, *spec.Max)
 		}
 	}
-	if !p.QuoteSize.IsPositive() {
-		return fmt.Errorf("quoteSize must be more than 0")
-	}
 	return nil
 }
 
 // Merge applies a partial JSON update (only the keys present change) and validates the result.
 func (p Params) Merge(patch []byte) (Params, error) {
-	var keys map[string]json.RawMessage
-	if err := json.Unmarshal(patch, &keys); err != nil {
-		return p, fmt.Errorf("expected a JSON object: %w", err)
-	}
-	known := map[string]bool{}
-	for _, s := range Schema() {
-		known[s.Key] = true
-	}
-	for k := range keys {
-		if !known[k] {
-			return p, fmt.Errorf("unknown parameter %q", k)
-		}
+	if err := checkKeys(patch, Schema()); err != nil {
+		return p, err
 	}
 	next := p
 	if err := json.Unmarshal(patch, &next); err != nil {
@@ -184,6 +183,24 @@ func (p Params) Merge(patch []byte) (Params, error) {
 		return p, err
 	}
 	return next, nil
+}
+
+// checkKeys fails on a patch that isn't a JSON object or names a key the schema doesn't have.
+func checkKeys(patch []byte, specs []ParamSpec) error {
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(patch, &keys); err != nil {
+		return fmt.Errorf("expected a JSON object: %w", err)
+	}
+	known := map[string]bool{}
+	for _, s := range specs {
+		known[s.Key] = true
+	}
+	for k := range keys {
+		if !known[k] {
+			return fmt.Errorf("unknown parameter %q", k)
+		}
+	}
+	return nil
 }
 
 // IsUSD reports a dollar stablecoin (USDC, USDT, PYUSD, USDG, USD1, ...): every book's quote
