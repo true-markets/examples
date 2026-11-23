@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import type { CancelResult, DefiOrderInput, ModifyOrderInput, NewOrderInput } from "../shared/api.ts";
+import { isQuoterOwned, type QuoterOwned } from "../shared/orders.ts";
 import type { Backend } from "./backend.ts";
 import type { QuoterClient } from "./quoter.ts";
 import { SimBackend } from "./sim/backend.ts";
@@ -43,10 +44,12 @@ export function createApp(backend: Backend, quoter?: QuoterClient): Hono {
 
   // With a symbol, cancels only that instrument's orders. The exchange has no such call, so this
   // reads the active orders and cancels each one. Without a symbol, it is the exchange's cancel-all.
+  // keepQuoter leaves the orders a running quoter keeps resting (see isQuoterOwned), which means
+  // canceling the rest one by one, even without a symbol.
   app.post("/api/orders/cancel-all", async (c) => {
-    const { symbol } = await json<{ symbol?: string }>(c);
-    if (!symbol) return c.json(await backend.cancelAll());
-    const targets = (await backend.activeOrders()).filter((o) => o.symbol === symbol);
+    const { symbol, keepQuoter } = await json<{ symbol?: string; keepQuoter?: QuoterOwned }>(c);
+    if (!symbol && !keepQuoter) return c.json(await backend.cancelAll());
+    const targets = (await backend.activeOrders()).filter((o) => (!symbol || o.symbol === symbol) && !isQuoterOwned(o, keepQuoter));
     return c.json(await cancelEach(backend, targets.map((o) => o.orderId)));
   });
 

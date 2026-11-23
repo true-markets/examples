@@ -712,10 +712,13 @@ func (d *Desk) OnCancelReject(clOrdID, origClOrdID, responseTo, text string) {
 // DeskStatus is the whole process at a glance: shared connections and balances, one line per
 // book, and the books that could be added.
 type DeskStatus struct {
-	Mode           string                `json:"mode"`
-	Environment    string                `json:"environment"`
-	Transport      string                `json:"transport"`
-	ClientID       string                `json:"clientId"`
+	Mode        string `json:"mode"`
+	Environment string `json:"environment"`
+	Transport   string `json:"transport"`
+	ClientID    string `json:"clientId"`
+	// IDPrefix starts the client order id of every order the quoter places, so other tools can
+	// tell its orders from the rest.
+	IDPrefix       string                `json:"idPrefix"`
 	StartedAt      time.Time             `json:"startedAt"`
 	Connections    map[string]*ConnState `json:"connections"`
 	Balances       []AssetBalance        `json:"balances"`
@@ -745,7 +748,7 @@ type Totals struct {
 
 func (d *Desk) Status() DeskStatus {
 	s := DeskStatus{
-		Mode: d.cfg.Mode, Environment: d.cfg.Environment, Transport: d.cfg.Transport, ClientID: d.cfg.ClientID,
+		Mode: d.cfg.Mode, Environment: d.cfg.Environment, Transport: d.cfg.Transport, ClientID: d.cfg.ClientID, IDPrefix: d.cfg.IDPrefix,
 		StartedAt: d.started, Connections: map[string]*ConnState{}, Books: []Summary{}, Available: []Listing{}, Warnings: []string{},
 	}
 	d.mu.Lock()

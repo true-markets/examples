@@ -508,6 +508,8 @@ export interface QuoterListing {
 // GET /api/status: the whole quoter process.
 export interface QuoterDeskStatus {
   mode: "live" | "paper";
+  // The client order id prefix on every order the quoter places. Older quoters don't send it.
+  idPrefix?: string;
   environment: "production" | "uat" | "paper";
   transport: "rest" | "fix" | "paper";
   clientId: string;

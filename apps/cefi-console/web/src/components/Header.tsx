@@ -1,6 +1,6 @@
 import { Ban, Monitor, Moon, OctagonX, Pause, Play, Square, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
-import { isActionable } from "../../../shared/orders.ts";
+import { isActionable, isQuoterOwned, type QuoterOwned } from "../../../shared/orders.ts";
 import { useCancelAll, useDemoStrategy, useQuoterControl, useQuoterStatus, useSession, useSetDemoStrategy } from "../api.ts";
 import { store, useConn, useOrders } from "../store.ts";
 import { useTheme, type Theme } from "../theme.ts";
@@ -17,11 +17,21 @@ export function Header() {
   const orders = useOrders();
   const cancelAll = useCancelAll();
   const [confirm, setConfirm] = useState<"all" | "symbol">();
-  const open = orders.filter((o) => isActionable(o.status)).length;
+  // While the quoter is quoting a book, its orders there aren't yours to cancel: it would only
+  // put them back. The cancel buttons count, and cancel, everything else; the quoter's own stop
+  // buttons pull its quotes.
+  const { data: desk } = useQuoterStatus(!!session?.quoter);
+  const quoting = desk?.books.filter((b) => b.enabled).map((b) => b.market.symbol) ?? [];
+  const keepQuoter: QuoterOwned | undefined = desk?.idPrefix && quoting.length ? { prefix: desk.idPrefix, symbols: quoting } : undefined;
+  const actionable = orders.filter((o) => isActionable(o.status));
+  const mine = actionable.filter((o) => !isQuoterOwned(o, keepQuoter));
+  const quoterOrders = actionable.length - mine.length;
+  const open = mine.length;
   // The book that's selected, and your open orders in it.
   const { symbol, view, setView } = useUi();
   const base = symbol?.split("-")[0];
-  const openInSymbol = symbol ? orders.filter((o) => o.symbol === symbol && isActionable(o.status)).length : 0;
+  const openInSymbol = symbol ? mine.filter((o) => o.symbol === symbol).length : 0;
+  const quoterNote = keepQuoter ? ` The quoter's ${quoterOrders} resting quote${quoterOrders === 1 ? "" : "s"} stay; Stop and pull pulls those.` : "";
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-panel px-4">
@@ -66,35 +76,42 @@ export function Header() {
             Sim strategy {strategy.data.running ? "running" : "paused"}
           </Button>
         )}
-        {symbol && (
-          <Button tone="danger" size="sm" disabled={openInSymbol === 0} onClick={() => setConfirm("symbol")} title={`Cancel every open order you have in ${symbol}`}>
+        {/* With the quoter quoting, these show only while there's something besides its quotes. */}
+        {symbol && (!keepQuoter || openInSymbol > 0) && (
+          <Button tone="danger" size="sm" disabled={openInSymbol === 0} onClick={() => setConfirm("symbol")}
+            title={`Cancel every open order you have in ${symbol}${keepQuoter ? ", except the quoter's" : ""}`}>
             <Ban size={13} /> Cancel {base} orders{openInSymbol ? ` (${openInSymbol})` : ""}
           </Button>
         )}
-        <Button tone="danger" size="sm" onClick={() => setConfirm("all")} title="DELETE /v1/cefi/orders/all">
-          <OctagonX size={14} /> Cancel all orders{open ? ` (${open})` : ""}
-        </Button>
+        {(!keepQuoter || open > 0) && (
+          <Button tone="danger" size="sm" onClick={() => setConfirm("all")}
+            title={keepQuoter ? "Cancel every open order you have, except the quoter's" : "DELETE /v1/cefi/orders/all"}>
+            <OctagonX size={14} /> Cancel all orders{open ? ` (${open})` : ""}
+          </Button>
+        )}
         {session?.quoter && <QuoterStops symbol={symbol} />}
       </div>
 
       {confirm === "symbol" && symbol && (
         <ConfirmCancel
           title={`Cancel all ${symbol} orders?`}
-          body={`Sends a cancel for each of your ${openInSymbol} open ${symbol} order${openInSymbol === 1 ? "" : "s"}, a few at a time. Orders in other books are left alone, and an order can still fill while its cancel is in flight.`}
+          body={`Sends a cancel for each of your ${openInSymbol} open ${symbol} order${openInSymbol === 1 ? "" : "s"}, a few at a time. Orders in other books are left alone, and an order can still fill while its cancel is in flight.${quoterNote}`}
           confirmLabel={`Cancel ${base} orders`}
           pending={cancelAll.isPending}
           onClose={() => setConfirm(undefined)}
-          onConfirm={() => cancelAll.mutate(symbol, { onSettled: () => setConfirm(undefined) })}
+          onConfirm={() => cancelAll.mutate({ symbol, keepQuoter }, { onSettled: () => setConfirm(undefined) })}
         />
       )}
       {confirm === "all" && (
         <ConfirmCancel
           title="Cancel every open order?"
-          body={`Sends one cancel-all to the exchange for all ${open} of your open orders, in every symbol. Cancels are processed one by one, and an order can still fill while its cancel is in flight. If a strategy is still running it may place new orders afterwards — stop it first.`}
+          body={keepQuoter
+            ? `Sends a cancel for each of your ${open} open order${open === 1 ? "" : "s"} in every symbol, a few at a time. An order can still fill while its cancel is in flight.${quoterNote}`
+            : `Sends one cancel-all to the exchange for all ${open} of your open orders, in every symbol. Cancels are processed one by one, and an order can still fill while its cancel is in flight. If a strategy is still running it may place new orders afterwards — stop it first.`}
           confirmLabel="Cancel everything"
           pending={cancelAll.isPending}
           onClose={() => setConfirm(undefined)}
-          onConfirm={() => cancelAll.mutate(undefined, { onSettled: () => setConfirm(undefined) })}
+          onConfirm={() => cancelAll.mutate({ keepQuoter }, { onSettled: () => setConfirm(undefined) })}
         />
       )}
     </header>

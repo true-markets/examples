@@ -42,6 +42,22 @@ describe("routes on the simulator", () => {
     expect(all.body.accepted).toEqual([b.body.orderId]);
   });
 
+  it("leaves the orders a running quoter keeps resting", async () => {
+    const { req } = setup();
+    const order = { side: "BUY", type: "LIMIT", tif: "GTC", qty: "0.01", price: "370" };
+    const quote = await req<{ orderId: string }>("POST", "/api/orders", { ...order, symbol: "TSLA-USDC", externalId: "cqtest000000000001" });
+    const mine = await req<{ orderId: string }>("POST", "/api/orders", { ...order, symbol: "TSLA-USDC" });
+    // The same prefix on a book the quoter isn't quoting is canceled like any other order.
+    const idle = await req<{ orderId: string }>("POST", "/api/orders", { ...order, symbol: "NVDA-USDC", price: "180", externalId: "cqtest000000000002" });
+    const keepQuoter = { prefix: "cq", symbols: ["TSLA-USDC"] };
+    const res = await req<CancelResult>("POST", "/api/orders/cancel-all", { keepQuoter });
+    expect(res.body.accepted.sort()).toEqual([mine.body.orderId, idle.body.orderId].sort());
+    const symbolOnly = await req<CancelResult>("POST", "/api/orders/cancel-all", { symbol: "TSLA-USDC", keepQuoter });
+    expect(symbolOnly.body.accepted).toEqual([]);
+    const all = await req<CancelResult>("POST", "/api/orders/cancel-all", {});
+    expect(all.body.accepted).toEqual([quote.body.orderId]);
+  });
+
   it("rejects malformed orders before they reach the exchange", async () => {
     const { req } = setup();
     const bad = [

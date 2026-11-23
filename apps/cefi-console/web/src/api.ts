@@ -23,6 +23,7 @@ import type {
   Session,
 } from "../../shared/api.ts";
 import { isCustodyPending, isCustodySettled, isDefiDone } from "../../shared/api.ts";
+import type { QuoterOwned } from "../../shared/orders.ts";
 import { usd as usdText } from "./format.ts";
 import { isLive, store } from "./store.ts";
 import { toast } from "./toast.ts";
@@ -164,10 +165,13 @@ function cancelSummary(r: CancelResult, what: string): string {
 }
 
 // Cancels many orders: everything (symbol undefined), or one symbol's orders.
+// keepQuoter leaves the orders a running quoter keeps resting (see isQuoterOwned).
 export const useCancelAll = () =>
-  useAction((symbol: string | undefined) => call<CancelResult>("POST", "/api/orders/cancel-all", { symbol }), {
-    success: (r, symbol) => cancelSummary(r, symbol ? `in ${symbol}` : "everywhere"),
-  });
+  useAction(
+    ({ symbol, keepQuoter }: { symbol?: string; keepQuoter?: QuoterOwned }) =>
+      call<CancelResult>("POST", "/api/orders/cancel-all", { symbol, keepQuoter }),
+    { success: (r, { symbol }) => cancelSummary(r, symbol ? `in ${symbol}` : "everywhere") },
+  );
 
 // Cancels a hand-picked set, one request per order.
 export const useCancelMany = () =>
