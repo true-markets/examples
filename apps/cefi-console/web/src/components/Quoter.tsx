@@ -866,7 +866,6 @@ function PositionCard({ s }: { s: QuoterStatus }) {
   const p = s.position;
   const base = s.market.baseSymbol;
   const quote = quoteUnit(s.market.quoteSymbol);
-  const max = Number(s.params.maxPosition ?? 0);
   const reset = useResetQuoterPosition();
   const [confirm, setConfirm] = useState(false);
   const since = new Date(p.since);
@@ -909,9 +908,6 @@ function PositionCard({ s }: { s: QuoterStatus }) {
       </Row>
       <Row label="Change" title="Bought minus sold since then">
         {signed(p.qty, 6)} {base}
-      </Row>
-      <Row label="Limit" title="The max position change, each way">
-        {max > 0 ? `±${s.params.sizeUnit === "quote" ? fmtUsd(max) : `${fmtQty(max)} ${base}`}` : "off"}
       </Row>
       <Row label="Avg cost">{Number(p.qty) === 0 ? "—" : fmtPrice(p.avgCost)}</Row>
       <Row label="Realized PnL">{signedUsd(Number(p.realizedPnl))}</Row>
