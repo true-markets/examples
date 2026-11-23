@@ -17,6 +17,7 @@ import type {
 } from "../../../shared/api.ts";
 import {
   useAddQuoterBook,
+  useInstruments,
   useQuoterRejects,
   useQuoterTrades,
   useQuoterBook,
@@ -1711,6 +1712,7 @@ function ReferenceCard({ s }: { s: QuoterStatus }) {
             {describeSource(x.ref)}: {x.action!.kind === "split" ? "likely split" : "out of line"} (try multiplier {x.action!.multiplier})
           </div>
         ))}
+        <ExchangeReference symbol={s.market.symbol} mid={v?.mid ?? s.reference?.mid ?? null} />
       </div>
       {editing && (
         <ReferenceEditor
@@ -1725,6 +1727,47 @@ function ReferenceCard({ s }: { s: QuoterStatus }) {
         />
       )}
     </Card>
+  );
+}
+
+// The exchange's own reference price for the book and its price band around it, from /instruments.
+// Orders outside the band are rejected ("Order outside book price bands"), so a reference of ours
+// far from the exchange's means one side of the ladder can't be placed.
+function ExchangeReference({ symbol, mid }: { symbol: string; mid: string | null }) {
+  const { data } = useInstruments();
+  const inst = data?.find((i) => i.symbol === symbol);
+  const ref = Number(inst?.referencePrice);
+  if (!inst || !(ref > 0)) return null;
+  const band = Number(inst.priceBandsPercent); // a fraction: 0.05 is 5%
+  const ours = Number(mid);
+  const gap = ours > 0 ? ours / ref - 1 : null;
+  // Within 3/5 of the band is fine, past it the outer levels get close, outside it orders are refused.
+  const tone = gap === null || !(band > 0) ? "" : Math.abs(gap) > band ? "text-danger" : Math.abs(gap) > band * 0.6 ? "text-accent" : "text-faint";
+  return (
+    <div className="mt-1 border-t border-line/60 pt-1">
+      <div
+        className="flex items-baseline gap-2"
+        title="The exchange's reference price for this book, from its instrument list (refreshed about once a minute). It rejects orders outside its price band around this price"
+      >
+        <span className="text-muted">Exchange reference</span>
+        <span className="ml-auto">{fmtPrice(ref)}</span>
+        <span className={cx("w-12 text-right", tone)} title="Our reference against the exchange's">
+          {gap === null ? "—" : `${gap >= 0 ? "+" : ""}${(gap * 100).toFixed(1)}%`}
+        </span>
+      </div>
+      {band > 0 && (
+        <div className="flex items-baseline gap-2 text-[11px] text-faint" title="Orders priced outside this range are rejected">
+          <span>Band ±{(band * 100).toFixed(band * 100 < 1 ? 2 : 0)}%</span>
+          <span className="ml-auto">
+            {fmtPrice(ref * (1 - band))} – {fmtPrice(ref * (1 + band))}
+          </span>
+          <span className="w-12" />
+        </div>
+      )}
+      {gap !== null && band > 0 && Math.abs(gap) > band && (
+        <div className="text-[11px] text-danger">Our reference is outside the exchange's band, so orders priced near it are rejected</div>
+      )}
+    </div>
   );
 }
 
