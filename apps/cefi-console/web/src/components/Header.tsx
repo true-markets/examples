@@ -1,4 +1,4 @@
-import { Ban, Monitor, Moon, OctagonX, Pause, Play, Square, Sun } from "lucide-react";
+import { Ban, Menu, Monitor, Moon, OctagonX, Pause, Play, Square, Sun, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { isActionable, isQuoterOwned, type QuoterOwned } from "../../../shared/orders.ts";
 import { useCancelAll, useDemoStrategy, useQuoterControl, useQuoterStatus, useSession, useSetDemoStrategy } from "../api.ts";
@@ -7,9 +7,12 @@ import { useTheme, type Theme } from "../theme.ts";
 import { useUi } from "../ui-state.tsx";
 import { ConfirmCancel } from "./ConfirmCancel.tsx";
 import { Logo } from "./Logo.tsx";
+import { DrawerItem, DrawerSection, DrawerSetting, useDrawer, usePhone } from "./Phone.tsx";
 import { Button, cx, Segmented } from "./ui.tsx";
 
 export function Header() {
+  const phone = usePhone();
+  const drawer = useDrawer();
   const { data: session } = useSession();
   const demo = session?.mode === "demo";
   const strategy = useDemoStrategy(demo);
@@ -32,6 +35,118 @@ export function Header() {
   const base = symbol?.split("-")[0];
   const openInSymbol = symbol ? mine.filter((o) => o.symbol === symbol).length : 0;
   const quoterNote = keepQuoter ? ` The quoter's ${quoterOrders} resting quote${quoterOrders === 1 ? "" : "s"} stay; Stop and pull pulls those.` : "";
+
+  const dialogs = (
+    <>
+      {confirm === "symbol" && symbol && (
+        <ConfirmCancel
+          title={`Cancel all ${symbol} orders?`}
+          body={`Sends a cancel for each of your ${openInSymbol} open ${symbol} order${openInSymbol === 1 ? "" : "s"}, a few at a time. Orders in other books are left alone, and an order can still fill while its cancel is in flight.${quoterNote}`}
+          confirmLabel={`Cancel ${base} orders`}
+          pending={cancelAll.isPending}
+          onClose={() => setConfirm(undefined)}
+          onConfirm={() => cancelAll.mutate({ symbol, keepQuoter }, { onSettled: () => setConfirm(undefined) })}
+        />
+      )}
+      {confirm === "all" && (
+        <ConfirmCancel
+          title="Cancel every open order?"
+          body={keepQuoter
+            ? `Sends a cancel for each of your ${open} open order${open === 1 ? "" : "s"} in every symbol, a few at a time. An order can still fill while its cancel is in flight.${quoterNote}`
+            : `Sends one cancel-all to the exchange for all ${open} of your open orders, in every symbol. Cancels are processed one by one, and an order can still fill while its cancel is in flight. If a strategy is still running it may place new orders afterwards — stop it first.`}
+          confirmLabel="Cancel everything"
+          pending={cancelAll.isPending}
+          onClose={() => setConfirm(undefined)}
+          onConfirm={() => cancelAll.mutate({ keepQuoter }, { onSettled: () => setConfirm(undefined) })}
+        />
+      )}
+    </>
+  );
+  const showCancelSymbol = !!symbol && (!keepQuoter || openInSymbol > 0);
+  const showCancelAll = !keepQuoter || open > 0;
+
+  // On a phone: the menu, the screen switch and one-tap Stop all stay in the bar; the panes, the
+  // cancels and the rest open from the menu.
+  if (phone) {
+    const close = () => drawer.setOpen(false);
+    return (
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-line bg-panel px-2">
+        <button
+          type="button"
+          onClick={() => drawer.setOpen(!drawer.open)}
+          aria-label={drawer.open ? "Close the menu" : "Open the menu"}
+          aria-expanded={drawer.open}
+          className="grid size-9 shrink-0 place-items-center rounded text-ink hover:bg-raised"
+        >
+          {drawer.open ? <X size={18} /> : <Menu size={18} />}
+        </button>
+        <Logo size={18} className="shrink-0 text-ink" />
+        {session && (
+          <span
+            className={cx(
+              "rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wider",
+              demo ? "bg-info-soft text-info" : session.environment === "uat" ? "bg-accent-soft text-accent" : "bg-sell-soft text-sell",
+            )}
+            title={demo ? "Running against the built-in simulator" : `Connected to ${session.environment}`}
+          >
+            {demo ? "DEMO" : session.environment === "uat" ? "UAT" : "LIVE"}
+          </span>
+        )}
+        {session?.quoter && (
+          <Segmented
+            value={view}
+            onChange={setView}
+            options={[
+              { value: "trading", label: "Trading" },
+              { value: "quoter", label: "Quoter" },
+            ]}
+          />
+        )}
+        <ConnectionDot compact />
+        {session?.quoter && <QuoterStops symbol={symbol} compact />}
+        {drawer.open && (
+          <div className="fixed inset-x-0 top-12 bottom-0 z-40 flex">
+            <nav className="h-full w-72 max-w-[85vw] overflow-y-auto border-r border-line bg-panel" aria-label="Panes and actions">
+              <div ref={drawer.setSlot} />
+              <DrawerSection title="Actions">
+                {demo && strategy.data && (
+                  <DrawerItem icon={strategy.data.running ? Pause : Play} onClick={() => setStrategy.mutate(!strategy.data!.running)}>
+                    Sim strategy {strategy.data.running ? "running" : "paused"}
+                  </DrawerItem>
+                )}
+                {session?.quoter && <QuoterStops symbol={symbol} drawer onDone={close} />}
+                {showCancelSymbol && (
+                  <DrawerItem icon={Ban} danger disabled={openInSymbol === 0} onClick={() => { close(); setConfirm("symbol"); }}>
+                    Cancel {base} orders{openInSymbol ? ` (${openInSymbol})` : ""}
+                  </DrawerItem>
+                )}
+                {showCancelAll && (
+                  <DrawerItem icon={OctagonX} danger onClick={() => { close(); setConfirm("all"); }}>
+                    Cancel all orders{open ? ` (${open})` : ""}
+                  </DrawerItem>
+                )}
+              </DrawerSection>
+              <DrawerSection title="Console">
+                {session && (session.accountLabel || session.clientId) && (
+                  <DrawerSetting label="Account">
+                    <span className="text-[11px]">{session.accountLabel ?? <span className="num">client {session.clientId}</span>}</span>
+                  </DrawerSetting>
+                )}
+                <DrawerSetting label="Feed">
+                  <ConnectionDot />
+                </DrawerSetting>
+                <DrawerSetting label="Theme">
+                  <ThemeSwitch />
+                </DrawerSetting>
+              </DrawerSection>
+            </nav>
+            <div className="flex-1 bg-black/40" onClick={close} aria-hidden="true" />
+          </div>
+        )}
+        {dialogs}
+      </header>
+    );
+  }
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-panel px-4">
@@ -77,13 +192,13 @@ export function Header() {
           </Button>
         )}
         {/* With the quoter quoting, these show only while there's something besides its quotes. */}
-        {symbol && (!keepQuoter || openInSymbol > 0) && (
+        {showCancelSymbol && (
           <Button tone="danger" size="sm" disabled={openInSymbol === 0} onClick={() => setConfirm("symbol")}
             title={`Cancel every open order you have in ${symbol}${keepQuoter ? ", except the quoter's" : ""}`}>
             <Ban size={13} /> Cancel {base} orders{openInSymbol ? ` (${openInSymbol})` : ""}
           </Button>
         )}
-        {(!keepQuoter || open > 0) && (
+        {showCancelAll && (
           <Button tone="danger" size="sm" onClick={() => setConfirm("all")}
             title={keepQuoter ? "Cancel every open order you have, except the quoter's" : "DELETE /v1/cefi/orders/all"}>
             <OctagonX size={14} /> Cancel all orders{open ? ` (${open})` : ""}
@@ -92,40 +207,64 @@ export function Header() {
         {session?.quoter && <QuoterStops symbol={symbol} />}
       </div>
 
-      {confirm === "symbol" && symbol && (
-        <ConfirmCancel
-          title={`Cancel all ${symbol} orders?`}
-          body={`Sends a cancel for each of your ${openInSymbol} open ${symbol} order${openInSymbol === 1 ? "" : "s"}, a few at a time. Orders in other books are left alone, and an order can still fill while its cancel is in flight.${quoterNote}`}
-          confirmLabel={`Cancel ${base} orders`}
-          pending={cancelAll.isPending}
-          onClose={() => setConfirm(undefined)}
-          onConfirm={() => cancelAll.mutate({ symbol, keepQuoter }, { onSettled: () => setConfirm(undefined) })}
-        />
-      )}
-      {confirm === "all" && (
-        <ConfirmCancel
-          title="Cancel every open order?"
-          body={keepQuoter
-            ? `Sends a cancel for each of your ${open} open order${open === 1 ? "" : "s"} in every symbol, a few at a time. An order can still fill while its cancel is in flight.${quoterNote}`
-            : `Sends one cancel-all to the exchange for all ${open} of your open orders, in every symbol. Cancels are processed one by one, and an order can still fill while its cancel is in flight. If a strategy is still running it may place new orders afterwards — stop it first.`}
-          confirmLabel="Cancel everything"
-          pending={cancelAll.isPending}
-          onClose={() => setConfirm(undefined)}
-          onConfirm={() => cancelAll.mutate({ keepQuoter }, { onSettled: () => setConfirm(undefined) })}
-        />
-      )}
+      {dialogs}
     </header>
   );
 }
 
 // The quoter's stop buttons, on both screens. Stopping a book pulls its quotes and keeps them pulled;
 // a plain cancel would only see the quoter put them back on its next cycle.
-function QuoterStops({ symbol }: { symbol: string | undefined }) {
+function QuoterStops({ symbol, compact, drawer, onDone }: { symbol: string | undefined; compact?: boolean; drawer?: boolean; onDone?: () => void }) {
   const { data: desk } = useQuoterStatus(true);
   const control = useQuoterControl();
   if (!desk) return null;
   const book = desk.books.find((b) => b.market.symbol === symbol);
   const anyRunning = desk.books.some((b) => b.enabled);
+  // The phone bar: Stop all, one tap, as on the desktop.
+  if (compact) {
+    return (
+      <Button
+        tone="danger"
+        size="sm"
+        className="ml-auto shrink-0"
+        disabled={!anyRunning || control.isPending}
+        onClick={() => control.mutate({ action: "stop" })}
+        title={anyRunning ? "Stop every quoter book and cancel every order the quoter has resting" : "No quoter book is quoting"}
+      >
+        <Square size={12} /> Stop all
+      </Button>
+    );
+  }
+  if (drawer) {
+    return (
+      <>
+        {book && (
+          <DrawerItem
+            icon={Square}
+            danger
+            disabled={!book.enabled || control.isPending}
+            onClick={() => {
+              control.mutate({ action: "stop", symbol: book.market.symbol });
+              onDone?.();
+            }}
+          >
+            Stop and pull {book.market.baseSymbol} quotes
+          </DrawerItem>
+        )}
+        <DrawerItem
+          icon={Square}
+          danger
+          disabled={!anyRunning || control.isPending}
+          onClick={() => {
+            control.mutate({ action: "stop" });
+            onDone?.();
+          }}
+        >
+          Stop and pull all quotes
+        </DrawerItem>
+      </>
+    );
+  }
   return (
     <>
       {book && (
@@ -152,7 +291,7 @@ function QuoterStops({ symbol }: { symbol: string | undefined }) {
   );
 }
 
-function ConnectionDot() {
+function ConnectionDot({ compact }: { compact?: boolean }) {
   const conn = useConn();
   const [, tick] = useState(0);
   useEffect(() => {
@@ -168,9 +307,9 @@ function ConnectionDot() {
     conn.socket === "connecting" ? "Connecting…" : conn.socket === "closed" ? "Disconnected, retrying" : conn.auth === "AUTHENTICATED" ? "Streaming" : (conn.auth ?? "Open");
   return (
     <span className="flex items-center gap-1.5 text-[11px] text-muted" title={conn.message ?? `Last message ${quiet ?? "—"}s ago · ${conn.reconnects} reconnects`}>
-      <span className={cx("inline-block size-2 rounded-full", bad ? "bg-sell" : quiet !== undefined && quiet > 12 ? "bg-accent" : "bg-buy pulse")} />
-      {label}
-      {conn.message && <span className="max-w-80 truncate text-sell">· {conn.message}</span>}
+      <span className={cx("inline-block size-2 shrink-0 rounded-full", bad ? "bg-sell" : quiet !== undefined && quiet > 12 ? "bg-accent" : "bg-buy pulse")} />
+      {compact ? <span className="sr-only">{label}</span> : label}
+      {!compact && conn.message && <span className="max-w-80 truncate text-sell">· {conn.message}</span>}
     </span>
   );
 }

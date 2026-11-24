@@ -1,14 +1,15 @@
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
-import { TriangleAlert, X } from "lucide-react";
-import { StrictMode, useEffect } from "react";
+import { ArrowLeftRight, BookOpen, LayoutGrid, ListOrdered, NotebookPen, TriangleAlert, Wallet, X } from "lucide-react";
+import { StrictMode, useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { isListed, useFillEnrichment, useFillHistory, useInstruments, useSession } from "./api.ts";
 import { Balances } from "./components/Balances.tsx";
 import { Header } from "./components/Header.tsx";
 import { Workspace } from "./components/Layout.tsx";
-import { Markets } from "./components/Markets.tsx";
+import { Markets, MarketsList } from "./components/Markets.tsx";
 import { OrderBook } from "./components/OrderBook.tsx";
 import { OrdersTable } from "./components/OrdersTable.tsx";
+import { DrawerProvider, PhoneScreen, usePhone, usePhonePane } from "./components/Phone.tsx";
 import { QuoterScreen } from "./components/Quoter.tsx";
 import { Ticket } from "./components/Ticket.tsx";
 import { Trades } from "./components/Trades.tsx";
@@ -94,9 +95,47 @@ function Toasts() {
   );
 }
 
+// The trading screen on a phone: the one-line market bar with the book picker, then one pane at a
+// time, picked from the menu.
+const TRADING_PANES = ["markets", "book", "ticket", "orders", "fills", "balances"] as const;
+type TradingPane = (typeof TRADING_PANES)[number];
+
+function TradingPhone() {
+  const { ticket, focusOrderId } = useUi();
+  const [pane, setPane] = usePhonePane<TradingPane>("trading", "book", TRADING_PANES);
+  // Clicking a price in the book fills the ticket, and clicking a fill finds its order: follow them.
+  const seen = useRef({ nonce: ticket.nonce, focusOrderId });
+  useEffect(() => {
+    if (ticket.nonce !== seen.current.nonce) setPane("ticket");
+    else if (focusOrderId && focusOrderId !== seen.current.focusOrderId) setPane("orders");
+    seen.current = { nonce: ticket.nonce, focusOrderId };
+  }, [ticket.nonce, focusOrderId, setPane]);
+  const group = "Trading";
+  return (
+    <main className="flex min-h-0 flex-1 flex-col gap-2 p-2">
+      <Markets phone />
+      <div className="min-h-0 flex-1">
+        <PhoneScreen<TradingPane>
+          pane={pane}
+          onPane={setPane}
+          panes={[
+            { key: "markets", label: "Markets", icon: LayoutGrid, group, node: <MarketsList onPick={() => setPane("book")} /> },
+            { key: "book", label: "Order book", icon: BookOpen, group, node: <OrderBook /> },
+            { key: "ticket", label: "Ticket", icon: NotebookPen, group, node: <Ticket /> },
+            { key: "orders", label: "Orders", icon: ListOrdered, group, node: <OrdersTable /> },
+            { key: "fills", label: "Fills and tape", icon: ArrowLeftRight, group, node: <Trades /> },
+            { key: "balances", label: "Balances", icon: Wallet, group, node: <Balances /> },
+          ]}
+        />
+      </div>
+    </main>
+  );
+}
+
 function App() {
   const { view } = useUi();
   const { data: session } = useSession();
+  const phone = usePhone();
   const quoter = view === "quoter" && !!session?.quoter;
   return (
     <div className="flex h-full flex-col">
@@ -107,6 +146,8 @@ function App() {
         <main className="min-h-0 flex-1 overflow-hidden p-2">
           <QuoterScreen />
         </main>
+      ) : phone ? (
+        <TradingPhone />
       ) : (
         <main className="flex min-h-0 flex-1 flex-col gap-2 p-2">
           <Markets />
@@ -124,7 +165,9 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <UiProvider>
-        <App />
+        <DrawerProvider>
+          <App />
+        </DrawerProvider>
       </UiProvider>
     </QueryClientProvider>
   </StrictMode>,

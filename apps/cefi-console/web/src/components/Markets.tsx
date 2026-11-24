@@ -14,8 +14,8 @@ const COLLAPSED_KEY = "cefi-console:markets-collapsed";
 // The market bar. Open, it shows one tile per instrument in two rows that fit the width: live top
 // of book and how many of your orders rest there. Collapsed, it is one line: a summary of your
 // orders across every book, then the selected book's top of book and a picker to switch books. Disabled
-// instruments are left out unless you still have orders on one.
-export function Markets() {
+// instruments are left out unless you still have orders on one. On a phone it is always the one line.
+export function Markets({ phone }: { phone?: boolean }) {
   const { data: instruments } = useInstruments();
   const { symbol, setSymbol } = useUi();
   useMarket();
@@ -29,6 +29,7 @@ export function Markets() {
   const open = useMemo(() => summarize(orders), [orders]);
   const shown = (instruments ?? []).filter((i) => isListed(i) || (open.bySymbol.get(i.symbol) ?? 0) > 0);
 
+  if (phone) return <Summary shown={shown} symbol={symbol} setSymbol={setSymbol} open={open} phone />;
   return (
     <div className="flex items-stretch gap-1.5">
       <div className="min-w-0 flex-1">
@@ -48,6 +49,43 @@ export function Markets() {
         {/* Not a chevron, so it doesn't read as another dropdown next to the book picker. */}
         {collapsed ? <LayoutGrid size={14} /> : <FoldVertical size={14} />}
       </button>
+    </div>
+  );
+}
+
+// Every book as a tile, one under another, for the phone's Markets pane: your order totals across
+// every book first, then the tiles. Picking one selects it and calls onPick.
+export function MarketsList({ onPick }: { onPick: () => void }) {
+  const { data: instruments } = useInstruments();
+  const { symbol, setSymbol } = useUi();
+  useMarket();
+  const orders = useOrders();
+  const open = useMemo(() => summarize(orders), [orders]);
+  const shown = (instruments ?? []).filter((i) => isListed(i) || (open.bySymbol.get(i.symbol) ?? 0) > 0);
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-2 overflow-y-auto">
+      <div className="num flex shrink-0 flex-wrap items-baseline gap-x-4 gap-y-1 rounded-md border border-line bg-panel px-3 py-2 text-xs text-muted">
+        <span>
+          <span className="text-ink">{shown.length}</span> books
+        </span>
+        <span>
+          <span className="text-ink">{open.count}</span> open orders
+        </span>
+        <span title="Your open orders across every book, at their limit prices">
+          bids <span className="text-buy">{usd(open.bidUsd)}</span> · asks <span className="text-sell">{usd(open.askUsd)}</span>
+        </span>
+      </div>
+      <Tiles
+        shown={shown}
+        symbol={symbol}
+        setSymbol={(s) => {
+          setSymbol(s);
+          onPick();
+        }}
+        openBySymbol={open.bySymbol}
+        ordersBySymbol={open.orders}
+        columns={1}
+      />
     </div>
   );
 }
@@ -82,14 +120,17 @@ function Tiles({
   setSymbol,
   openBySymbol,
   ordersBySymbol,
+  columns: fixed,
 }: {
   shown: Instrument[];
   symbol?: string;
   setSymbol: (s: string) => void;
   openBySymbol: Map<string, number>;
   ordersBySymbol: Map<string, OrderRow[]>;
+  // Two rows across the width unless set.
+  columns?: number;
 }) {
-  const columns = Math.max(1, Math.ceil(shown.length / 2));
+  const columns = fixed ?? Math.max(1, Math.ceil(shown.length / 2));
   return (
     <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
       {shown.map((i) => {
@@ -127,7 +168,20 @@ function Tiles({
 
 const NONE: OrderRow[] = [];
 
-function Summary({ shown, symbol, setSymbol, open }: { shown: Instrument[]; symbol?: string; setSymbol: (s: string) => void; open: OpenSummary }) {
+function Summary({
+  shown,
+  symbol,
+  setSymbol,
+  open,
+  phone,
+}: {
+  shown: Instrument[];
+  symbol?: string;
+  setSymbol: (s: string) => void;
+  open: OpenSummary;
+  // Just the selected book: its picker, bid and ask, and your orders there.
+  phone?: boolean;
+}) {
   const e = symbol ? store.ebbo.get(symbol) : undefined;
   const bid = Number(e?.info.best_bid?.price ?? 0);
   const ask = Number(e?.info.best_ask?.price ?? 0);
@@ -138,7 +192,7 @@ function Summary({ shown, symbol, setSymbol, open }: { shown: Instrument[]; symb
   // right-aligned), so a digit coming or going doesn't push its neighbours around.
   return (
     <div className="flex h-9 items-center gap-4 overflow-hidden rounded-md border border-line bg-panel px-2 text-xs whitespace-nowrap">
-      <span className="flex items-baseline gap-4 pl-1 text-muted">
+      <span className={cx("flex items-baseline gap-4 pl-1 text-muted", phone && "hidden")}>
         <span>
           <Slot ch={2} className="text-ink">
             {shown.length}
@@ -163,12 +217,12 @@ function Summary({ shown, symbol, setSymbol, open }: { shown: Instrument[]; symb
         </span>
       </span>
 
-      <span className="ml-auto flex items-center gap-4">
+      <span className={cx("ml-auto flex items-center", phone ? "min-w-0 flex-1 gap-2" : "gap-4")}>
         {/* Keeps its place at zero, so orders coming and going don't shift the prices beside it. */}
-        <span className={cx("min-w-[11ch] rounded bg-accent-soft px-1.5 text-center text-[10px] font-semibold text-accent", mine === 0 && "invisible")}>
+        <span className={cx("min-w-[11ch] rounded bg-accent-soft px-1.5 text-center text-[10px] font-semibold text-accent", mine === 0 && "invisible", phone && "hidden")}>
           {mine} open here
         </span>
-        <span className="flex items-baseline gap-1.5">
+        <span className={cx("flex items-baseline gap-1.5", phone && "hidden")}>
           <span className="text-[10px] text-faint uppercase">Last</span>
           <Slot ch={8} className="text-[13px] font-medium">
             {price(e?.info.last_trade?.price)}
@@ -182,12 +236,12 @@ function Summary({ shown, symbol, setSymbol, open }: { shown: Instrument[]; symb
           <Slot ch={8} align="left" className="text-sell">
             {price(e?.info.best_ask?.price)}
           </Slot>
-          <span className="text-[11px] text-muted">
+          <span className={cx("text-[11px] text-muted", phone && "hidden")}>
             <Slot ch={5}>{spreadBps !== undefined ? spreadBps.toFixed(1) : "—"}</Slot> bps
           </span>
         </span>
         {/* A fixed width too, so switching to a longer symbol doesn't move everything left. */}
-        <select className={cx(selectClass, "w-52 font-semibold")} value={symbol ?? ""} onChange={(ev) => setSymbol(ev.target.value)} aria-label="Book">
+        <select className={cx(selectClass, phone ? "w-auto min-w-0 flex-1 font-semibold" : "w-52 font-semibold")} value={symbol ?? ""} onChange={(ev) => setSymbol(ev.target.value)} aria-label="Book">
           {shown.map((i) => {
             const n = open.bySymbol.get(i.symbol) ?? 0;
             return (

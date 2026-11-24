@@ -132,9 +132,13 @@ export function Modal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onMouseDown={onClose}>
+    // On a phone it rises from the bottom, full width, short of the top so the page still shows.
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 max-md:items-end max-md:p-0" onMouseDown={onClose}>
       <div
-        className={cx("flex max-h-full w-full flex-col rounded-lg border border-line bg-panel shadow-2xl", wide ? "max-w-6xl" : "max-w-md")}
+        className={cx(
+          "flex max-h-full w-full flex-col rounded-lg border border-line bg-panel shadow-2xl max-md:max-h-[85dvh] max-md:max-w-none max-md:rounded-b-none",
+          wide ? "max-w-6xl" : "max-w-md",
+        )}
         onMouseDown={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"

@@ -8,6 +8,7 @@ import { bookFor, custodyAmount, floorDecimals, toRows, trimZeros, type AmountUn
 import { ago, price as fmtPrice, qty, usd } from "../format.ts";
 import { DataTable, type ColMeta } from "../table/DataTable.tsx";
 import { useUi } from "../ui-state.tsx";
+import { usePhone } from "./Phone.tsx";
 import { Button, Empty, Field, Modal, Panel, Segmented, SymbolLink, cx, inputClass, selectClass } from "./ui.tsx";
 
 type Action = (kind: "allocations" | "releases", row: AssetRow) => void;
@@ -123,6 +124,7 @@ function AssetTable({ rows, unsettledFees, onAction }: { rows: AssetRow[]; unset
   const [filters, setFilters] = useState<ColumnFiltersState>([]);
   const { data: instruments } = useInstruments();
   const { setSymbol } = useUi();
+  const phone = usePhone();
   const symbols = useMemo(() => instruments?.filter(isListed).map((i) => i.symbol) ?? [], [instruments]);
   const columns = useMemo(
     () => [
@@ -210,7 +212,8 @@ function AssetTable({ rows, unsettledFees, onAction }: { rows: AssetRow[]; unset
       col.display({
         id: "actions",
         header: "",
-        size: 170,
+        // Icons only on a phone.
+        size: phone ? 72 : 170,
         enableSorting: false,
         enableResizing: false,
         meta: { label: "Actions", fixed: "right" } satisfies ColMeta,
@@ -225,17 +228,17 @@ function AssetTable({ rows, unsettledFees, onAction }: { rows: AssetRow[]; unset
                 title={r.canAllocate ? "Commit wallet funds to CeFi trading" : `${r.symbol} doesn't trade on CeFi`}
                 onClick={() => onAction("allocations", r)}
               >
-                <ArrowUpFromLine size={11} /> Allocate
+                <ArrowUpFromLine size={11} /> <span className="max-md:sr-only">Allocate</span>
               </Button>
               <Button size="xs" disabled={!(r.allocated > 0)} title="Free funds from CeFi back to the wallet" onClick={() => onAction("releases", r)}>
-                <ArrowDownToLine size={11} /> Release
+                <ArrowDownToLine size={11} /> <span className="max-md:sr-only">Release</span>
               </Button>
             </div>
           );
         },
       }),
     ],
-    [onAction, unsettledFees, symbols, setSymbol],
+    [onAction, unsettledFees, symbols, setSymbol, phone],
   );
 
   // Choices for the Asset filter, from the rows shown before filtering.

@@ -1,7 +1,27 @@
-import { ChartColumn, ChevronDown, ChevronUp, CircleAlert, CircleHelp, Play, Plus, RotateCcw, SlidersHorizontal, Square, Trash2 } from "lucide-react";
+import {
+  ChartColumn,
+  ChevronDown,
+  ChevronUp,
+  CircleAlert,
+  CircleHelp,
+  Gauge,
+  History,
+  Layers,
+  LayoutDashboard,
+  List,
+  Play,
+  Plus,
+  Receipt,
+  RotateCcw,
+  SlidersHorizontal,
+  Square,
+  Trash2,
+  Wallet,
+} from "lucide-react";
 import { createContext, Fragment, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Panel as Pane } from "react-resizable-panels";
 import { Divider, pane, Split } from "./Layout.tsx";
+import { DrawerSetting, PhoneScreen, usePhone, usePhonePane } from "./Phone.tsx";
 import type {
   QuoterBookSummary,
   QuoterReject,
@@ -60,6 +80,9 @@ export function QuoterScreen() {
   const [units, setUnits] = useStoredChoice<Units>("cefi-console:quoter-units", "bps", ["bps", "usd"]);
   // At most one breakdown open at a time; it takes the screen below the bars in place of the books.
   const [open, setOpen] = useStoredChoice<"none" | "edge" | "params">("cefi-console:quoter-breakdown", "none", ["none", "edge", "params"]);
+  // On a phone, one pane at a time in place of the breakdowns.
+  const phone = usePhone();
+  const [phonePane, setPhonePane] = usePhonePane<QuoterPane>("quoter", "ladder", QUOTER_PANES);
   const books = desk?.books ?? [];
   const has = (s: string | undefined) => !!s && books.some((b) => b.market.symbol === s);
   // The shared instrument if it's a book; else the last book picked here, or the first one.
@@ -71,8 +94,9 @@ export function QuoterScreen() {
       setPicked(s);
       setSymbol(s);
       setOpen("none");
+      setPhonePane("ladder");
     },
-    [setSymbol, setOpen],
+    [setSymbol, setOpen, setPhonePane],
   );
   // On this screen the header's buttons follow the book shown, so an instrument without a book
   // gives way to the one that is.
@@ -98,6 +122,89 @@ export function QuoterScreen() {
   if (!desk) return <Empty>Connecting to the quoter…</Empty>;
   // With no books there's nothing to break down.
   const shownOpen = desk.books.length ? open : "none";
+
+  if (phone) {
+    const live = desk.environment === "production";
+    const paper = desk.mode === "paper";
+    const bookPane = (part: BookPart) =>
+      selected ? (
+        <PhoneBook key={selected} symbol={selected} live={live} paper={paper} part={part} />
+      ) : (
+        <Panel title="No books yet" className="h-full">
+          <Empty>Add a book from Books. It starts stopped, with a preview of what it would quote, until you start it.</Empty>
+        </Panel>
+      );
+    const desk_ = "Desk";
+    const book = selected ?? "Book";
+    return (
+      <ShowHelp.Provider value={help}>
+        <ShowUnits.Provider value={units}>
+          <PhoneScreen<QuoterPane>
+            pane={phonePane}
+            onPane={setPhonePane}
+            settings={
+              <>
+                <DrawerSetting label="Edge and distances in">
+                  <UnitsSwitch units={units} onUnits={setUnits} />
+                </DrawerSetting>
+                <DrawerSetting label="Explanations">
+                  <Button size="xs" tone="ghost" aria-pressed={help} onClick={() => setHelp(!help)}>
+                    <CircleHelp size={12} className={help ? "text-info" : undefined} /> Help {help ? "on" : "off"}
+                  </Button>
+                </DrawerSetting>
+              </>
+            }
+            panes={[
+              {
+                key: "overview",
+                label: "Overview",
+                icon: LayoutDashboard,
+                group: desk_,
+                node: (
+                  <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto *:shrink-0">
+                    <DeskBar d={desk} stale={!!status.error} help={help} onHelp={setHelp} />
+                    <Warnings list={desk.warnings} />
+                    <AllBooksBar d={desk} open={false} onToggle={() => setPhonePane("all-params")} onUnits={setUnits} />
+                    <ActivityBar d={desk} open={false} onToggle={() => setPhonePane("trades")} />
+                  </div>
+                ),
+              },
+              {
+                key: "books",
+                label: "Books",
+                icon: List,
+                group: desk_,
+                note: desk.books.length,
+                node: <BooksPanel d={desk} selected={selected} onSelect={select} />,
+              },
+              { key: "balances", label: "Balances", icon: Wallet, group: desk_, node: <SharedBalancesPanel d={desk} onOpen={select} /> },
+              { key: "trades", label: "Trades", icon: Receipt, group: desk_, note: desk.trades.trades || undefined, node: <TradesView onOpen={select} /> },
+              {
+                key: "all-params",
+                label: "All-books parameters",
+                icon: SlidersHorizontal,
+                group: desk_,
+                node: (
+                  <div className="flex h-full min-h-0 flex-col gap-2 overflow-y-auto">
+                    <div className="shrink-0">
+                      <QuoterSettings />
+                    </div>
+                    <div className="min-h-[60vh] flex-1">
+                      <BulkParams d={desk} />
+                    </div>
+                  </div>
+                ),
+              },
+              { key: "cards", label: "Prices and position", icon: Gauge, group: book, node: bookPane("cards") },
+              { key: "ladder", label: "Ladder", icon: Layers, group: book, node: bookPane("ladder") },
+              { key: "params", label: "Parameters", icon: SlidersHorizontal, group: book, node: bookPane("params") },
+              { key: "events", label: "Events", icon: History, group: book, node: bookPane("events") },
+            ]}
+          />
+        </ShowUnits.Provider>
+      </ShowHelp.Provider>
+    );
+  }
 
   // Books and balances run the full height on the left and always show. On the right: the two
   // summary bars, then the selected book, or the breakdown one of the bars opened in its place.
@@ -311,7 +418,7 @@ function DeskBar({ d, stale, help, onHelp }: { d: QuoterDeskStatus; stale: boole
   };
 
   return (
-    <section className="flex flex-wrap items-center gap-3 rounded-md border border-line bg-panel px-3 py-2">
+    <section className="flex flex-wrap items-center gap-3 rounded-md border border-line bg-panel px-3 py-2 max-md:py-3">
       <span className="text-sm font-semibold">Quoter</span>
       <span
         className={cx(
@@ -350,7 +457,7 @@ function DeskBar({ d, stale, help, onHelp }: { d: QuoterDeskStatus; stale: boole
         <CircleHelp size={12} className={help ? "text-info" : undefined} /> Help {help ? "on" : "off"}
       </Button>
       {stale && <span className="text-[11px] text-sell">· lost contact with the quoter, showing the last status</span>}
-      <div className="ml-auto flex items-center gap-3">
+      <div className="ml-auto flex items-center gap-3 max-md:ml-0 max-md:basis-full max-md:flex-wrap max-md:border-t max-md:border-line max-md:pt-2">
         <span className="num text-xs">
           <RateLimitItem d={d} />
         </span>
@@ -705,27 +812,7 @@ function BookView({ symbol, live, paper }: { symbol: string; live: boolean; pape
                 className="grid h-full gap-2"
                 style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${CARD_MIN}px, 1fr))`, gridAutoRows: "minmax(120px, 1fr)" }}
               >
-                <CardPair
-                  id="prices"
-                  cards={[
-                    { key: "prices", label: "Prices", node: <PricesCard s={s} paper={paper} /> },
-                    { key: "reference", label: "Reference", node: <ReferenceCard s={s} /> },
-                  ]}
-                />
-                <CardPair
-                  id="position"
-                  cards={[
-                    { key: "position", label: "Position", node: <PositionCard s={s} /> },
-                    { key: "taking", label: "Taking", node: <TakingCard s={s} /> },
-                  ]}
-                />
-                <CardPair
-                  id="budget"
-                  cards={[
-                    { key: "budget", label: "Budget", node: <BalancesCard s={s} /> },
-                    { key: "activity", label: "Activity", node: <ActivityCard s={s} /> },
-                  ]}
-                />
+                <BookCards s={s} paper={paper} />
               </div>
             </div>
           </Pane>
@@ -752,6 +839,65 @@ function BookView({ symbol, live, paper }: { symbol: string; live: boolean; pape
             </div>
           </Pane>
         </Split>
+      </div>
+    </div>
+  );
+}
+
+function BookCards({ s, paper }: { s: QuoterStatus; paper: boolean }) {
+  return (
+    <>
+      <CardPair
+        id="prices"
+        cards={[
+          { key: "prices", label: "Prices", node: <PricesCard s={s} paper={paper} /> },
+          { key: "reference", label: "Reference", node: <ReferenceCard s={s} /> },
+        ]}
+      />
+      <CardPair
+        id="position"
+        cards={[
+          { key: "position", label: "Position", node: <PositionCard s={s} /> },
+          { key: "taking", label: "Taking", node: <TakingCard s={s} /> },
+        ]}
+      />
+      <CardPair
+        id="budget"
+        cards={[
+          { key: "budget", label: "Budget", node: <BalancesCard s={s} /> },
+          { key: "activity", label: "Activity", node: <ActivityCard s={s} /> },
+        ]}
+      />
+    </>
+  );
+}
+
+// The quoter screen's panes on a phone.
+const QUOTER_PANES = ["overview", "books", "balances", "trades", "all-params", "cards", "ladder", "params", "events"] as const;
+type QuoterPane = (typeof QUOTER_PANES)[number];
+type BookPart = "cards" | "ladder" | "params" | "events";
+
+// One part of a book, under its control bar.
+function PhoneBook({ symbol, live, paper, part }: { symbol: string; live: boolean; paper: boolean; part: BookPart }) {
+  const book = useQuoterBook(symbol);
+  const s = book.data;
+  if (!s) return book.error ? <Empty>{book.error.message}</Empty> : <Empty>Loading {symbol}…</Empty>;
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-2">
+      <ControlBar s={s} live={live} />
+      <Warnings list={s.warnings} />
+      <div className={cx("min-h-0 flex-1", part === "cards" && "overflow-y-auto")}>
+        {part === "cards" ? (
+          <div className="grid gap-2" style={{ gridAutoRows: "auto" }}>
+            <BookCards s={s} paper={paper} />
+          </div>
+        ) : part === "ladder" ? (
+          <LadderPanel s={s} stacked />
+        ) : part === "params" ? (
+          <ParamsPanel symbol={symbol} s={s} />
+        ) : (
+          <EventsPanel s={s} />
+        )}
       </div>
     </div>
   );
@@ -1116,7 +1262,7 @@ function ActivityCard({ s }: { s: QuoterStatus }) {
 
 // ---------- ladder ----------
 
-function LadderPanel({ s }: { s: QuoterStatus }) {
+function LadderPanel({ s, stacked }: { s: QuoterStatus; stacked?: boolean }) {
   const levels = Math.max(Number(s.params.levels ?? 0), ...s.orders.map((o) => o.level + 1), ...s.targets.map((t) => t.level + 1));
   const find = <T extends { level: number }>(list: T[], side: string, level: number, sideOf: (x: T) => string) =>
     list.find((x) => x.level === level && sideOf(x) === side);
@@ -1136,57 +1282,61 @@ function LadderPanel({ s }: { s: QuoterStatus }) {
       center={<LadderSpread s={s} />}
     >
       <div className="h-full overflow-auto">
-        <div className="overflow-x-auto">
-          <table className="num w-full text-xs">
-            <thead className="text-[11px] text-muted">
-              <tr className="border-b border-line">
-                <th className={cx(th, "text-left")}>Status</th>
-                <th className={cx(th, "text-right")}>Size</th>
-                <th className={cx(th, "text-right text-buy")}>Bid</th>
-                <th className={cx(th, "text-right")}>Target</th>
-                <th className={cx(th, "text-center")}>Lvl</th>
-                <th className={cx(th, "text-left")}>Target</th>
-                <th className={cx(th, "text-left text-sell")}>Ask</th>
-                <th className={cx(th, "text-left")}>Size</th>
-                <th className={cx(th, "text-right")}>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.level} className="border-b border-line/60">
-                  <td className="px-2 py-1.5">{r.bid && <OrderBadge o={r.bid} />}</td>
-                  <td className="px-2 py-1.5 text-right">{r.bid ? <Size o={r.bid} /> : r.bidTarget ? <TargetSize t={r.bidTarget} /> : null}</td>
-                  <td className="px-2 py-1.5 text-right text-buy">
-                    {r.bid ? <OrderPrice o={r.bid} /> : "—"}
-                    {r.bid && <MidOffset price={r.bid.pendingPrice ?? r.bid.price} mid={mid} />}
-                  </td>
-                  <td className="px-2 py-1.5 text-right text-faint">
-                    {r.bidTarget && fmtPrice(r.bidTarget.price)}
-                    {r.bidTarget && <MidOffset price={r.bidTarget.price} mid={mid} />}
-                  </td>
-                  <td className="px-2 py-1.5 text-center text-muted">{r.level}</td>
-                  <td className="px-2 py-1.5 text-faint">
-                    {r.askTarget && fmtPrice(r.askTarget.price)}
-                    {r.askTarget && <MidOffset price={r.askTarget.price} mid={mid} />}
-                  </td>
-                  <td className="px-2 py-1.5 text-sell">
-                    {r.ask ? <OrderPrice o={r.ask} /> : "—"}
-                    {r.ask && <MidOffset price={r.ask.pendingPrice ?? r.ask.price} mid={mid} />}
-                  </td>
-                  <td className="px-2 py-1.5">{r.ask ? <Size o={r.ask} /> : r.askTarget ? <TargetSize t={r.askTarget} /> : null}</td>
-                  <td className="px-2 py-1.5 text-right">{r.ask && <OrderBadge o={r.ask} />}</td>
+        {stacked ? (
+          <StackedLadder rows={rows} mid={mid} />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="num w-full text-xs">
+              <thead className="text-[11px] text-muted">
+                <tr className="border-b border-line">
+                  <th className={cx(th, "text-left")}>Status</th>
+                  <th className={cx(th, "text-right")}>Size</th>
+                  <th className={cx(th, "text-right text-buy")}>Bid</th>
+                  <th className={cx(th, "text-right")}>Target</th>
+                  <th className={cx(th, "text-center")}>Lvl</th>
+                  <th className={cx(th, "text-left")}>Target</th>
+                  <th className={cx(th, "text-left text-sell")}>Ask</th>
+                  <th className={cx(th, "text-left")}>Size</th>
+                  <th className={cx(th, "text-right")}>Status</th>
                 </tr>
-              ))}
-              {levels === 0 && (
-                <tr>
-                  <td colSpan={9}>
-                    <Empty>Nothing to show yet</Empty>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.level} className="border-b border-line/60">
+                    <td className="px-2 py-1.5">{r.bid && <OrderBadge o={r.bid} />}</td>
+                    <td className="px-2 py-1.5 text-right">{r.bid ? <Size o={r.bid} /> : r.bidTarget ? <TargetSize t={r.bidTarget} /> : null}</td>
+                    <td className="px-2 py-1.5 text-right text-buy">
+                      {r.bid ? <OrderPrice o={r.bid} /> : "—"}
+                      {r.bid && <MidOffset price={r.bid.pendingPrice ?? r.bid.price} mid={mid} />}
+                    </td>
+                    <td className="px-2 py-1.5 text-right text-faint">
+                      {r.bidTarget && fmtPrice(r.bidTarget.price)}
+                      {r.bidTarget && <MidOffset price={r.bidTarget.price} mid={mid} />}
+                    </td>
+                    <td className="px-2 py-1.5 text-center text-muted">{r.level}</td>
+                    <td className="px-2 py-1.5 text-faint">
+                      {r.askTarget && fmtPrice(r.askTarget.price)}
+                      {r.askTarget && <MidOffset price={r.askTarget.price} mid={mid} />}
+                    </td>
+                    <td className="px-2 py-1.5 text-sell">
+                      {r.ask ? <OrderPrice o={r.ask} /> : "—"}
+                      {r.ask && <MidOffset price={r.ask.pendingPrice ?? r.ask.price} mid={mid} />}
+                    </td>
+                    <td className="px-2 py-1.5">{r.ask ? <Size o={r.ask} /> : r.askTarget ? <TargetSize t={r.askTarget} /> : null}</td>
+                    <td className="px-2 py-1.5 text-right">{r.ask && <OrderBadge o={r.ask} />}</td>
+                  </tr>
+                ))}
+                {levels === 0 && (
+                  <tr>
+                    <td colSpan={9}>
+                      <Empty>Nothing to show yet</Empty>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
         <Help>
           <p className="border-t border-line px-3 py-2 text-[11px] leading-relaxed text-faint">
             Target is where the strategy wants each order this cycle; Bid and Ask are where the orders rest, with an arrow while a modify is in flight. An order
@@ -1197,6 +1347,68 @@ function LadderPanel({ s }: { s: QuoterStatus }) {
         </Help>
       </div>
     </Panel>
+  );
+}
+
+interface LadderRow {
+  level: number;
+  bid?: QuoterOrder;
+  ask?: QuoterOrder;
+  bidTarget?: QuoterTarget;
+  askTarget?: QuoterTarget;
+}
+
+// The ladder for a narrow screen, like an order book: asks above, the farthest level first, then the
+// reference mid, then bids from level 0 down.
+function StackedLadder({ rows, mid }: { rows: LadderRow[]; mid: string | undefined }) {
+  const th = "px-2 py-1.5 font-medium";
+  const row = (r: LadderRow, side: "BUY" | "SELL") => {
+    const o = side === "BUY" ? r.bid : r.ask;
+    const t = side === "BUY" ? r.bidTarget : r.askTarget;
+    return (
+      <tr key={`${side}${r.level}`} className="border-b border-line/60">
+        <td className="px-2 py-1.5 text-center text-muted">{r.level}</td>
+        <td className={cx("px-2 py-1.5 text-right", side === "BUY" ? "text-buy" : "text-sell")}>
+          {o ? <OrderPrice o={o} /> : "—"}
+          {o && <MidOffset price={o.pendingPrice ?? o.price} mid={mid} />}
+        </td>
+        <td className="px-2 py-1.5 text-right text-faint">
+          {t && fmtPrice(t.price)}
+          {t && <MidOffset price={t.price} mid={mid} />}
+        </td>
+        <td className="px-2 py-1.5 text-right">{o ? <Size o={o} /> : t ? <TargetSize t={t} /> : null}</td>
+        <td className="px-2 py-1.5 text-right">{o && <OrderBadge o={o} />}</td>
+      </tr>
+    );
+  };
+  return (
+    <table className="num w-full text-xs">
+      <thead className="text-[11px] text-muted">
+        <tr className="border-b border-line">
+          <th className={cx(th, "text-center")}>Lvl</th>
+          <th className={cx(th, "text-right")}>Price</th>
+          <th className={cx(th, "text-right")}>Target</th>
+          <th className={cx(th, "text-right")}>Size</th>
+          <th className={cx(th, "text-right")}>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {[...rows].reverse().map((r) => row(r, "SELL"))}
+        <tr className="border-b border-line bg-raised/50">
+          <td className="px-2 py-1.5 text-center text-[10px] text-faint uppercase">Mid</td>
+          <td className="px-2 py-1.5 text-right">{mid ? fmtPrice(mid) : "—"}</td>
+          <td colSpan={3} />
+        </tr>
+        {rows.map((r) => row(r, "BUY"))}
+        {rows.length === 0 && (
+          <tr>
+            <td colSpan={5}>
+              <Empty>Nothing to show yet</Empty>
+            </td>
+          </tr>
+        )}
+      </tbody>
+    </table>
   );
 }
 
@@ -1542,15 +1754,17 @@ function pct(v: number | null | undefined) {
 }
 
 const barLabel = "text-[10px] font-semibold uppercase tracking-wider text-muted";
-const barItem = "flex items-baseline gap-1.5";
+// On a phone the pieces of an item wrap whole, rather than squeezing into a narrow column.
+const barItem = "flex items-baseline gap-1.5 max-md:flex-wrap max-md:gap-y-0.5";
 
 // A summary bar: a name, its figures on one baseline, and a button on the right that opens what
 // sits under it. The button never makes the bar taller.
 function SummaryBar({ name, children, button }: { name: string; children: ReactNode; button: ReactNode }) {
   return (
-    <section className="num flex items-center gap-3 rounded-md border border-line bg-panel px-3 py-1.5 text-xs">
-      <span className={cx(barLabel, "w-[4.5rem] shrink-0")}>{name}</span>
-      <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-6 gap-y-1">{children}</div>
+    // On a phone the name and buttons share the first line and the figures wrap below them.
+    <section className="num flex items-center gap-3 rounded-md border border-line bg-panel px-3 py-1.5 text-xs max-md:flex-wrap max-md:py-3">
+      <span className={cx(barLabel, "w-[4.5rem] shrink-0 max-md:mr-auto max-md:w-auto")}>{name}</span>
+      <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-6 gap-y-1 max-md:order-last max-md:basis-full max-md:gap-y-2.5">{children}</div>
       {button}
     </section>
   );
@@ -1726,7 +1940,7 @@ function RateLimitItem({ d }: { d: QuoterDeskStatus }) {
         "Hits are times the exchange rejected requests for its rate limit anyway; each one pauses every book's new orders and modifies for 1s, doubling up to 30s while it keeps happening."
       }
     >
-      <span className={barLabel}>Rate limit</span>
+      <span className={cx(barLabel, "max-md:basis-full")}>Rate limit</span>
       {rl?.used !== undefined && (
         <>
           <Usage used={rl.used} limit={perSec} unit="s" />

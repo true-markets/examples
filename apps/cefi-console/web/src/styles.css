@@ -139,3 +139,13 @@
 ::-webkit-scrollbar-thumb:hover {
   background-color: var(--color-faint);
 }
+
+/* On a phone, fields at 16px or more: iOS zooms the page into any field smaller than that when it
+   takes focus, and leaves it zoomed. Unlayered, so it wins over the text-size utilities. */
+@media (max-width: 767px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
