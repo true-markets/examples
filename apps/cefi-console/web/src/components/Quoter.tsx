@@ -888,7 +888,7 @@ function PhoneBook({ symbol, live, paper, part }: { symbol: string; live: boolea
       <Warnings list={s.warnings} />
       <div className={cx("min-h-0 flex-1", part === "cards" && "overflow-y-auto")}>
         {part === "cards" ? (
-          <div className="grid gap-2" style={{ gridAutoRows: "minmax(220px, auto)" }}>
+          <div className="grid gap-2" style={{ gridAutoRows: "auto" }}>
             <BookCards s={s} paper={paper} />
           </div>
         ) : part === "ladder" ? (
