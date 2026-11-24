@@ -161,7 +161,7 @@ export function QuoterScreen() {
                 icon: LayoutDashboard,
                 group: desk_,
                 node: (
-                  <div className="flex h-full min-h-0 flex-col gap-2 overflow-y-auto">
+                  <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto *:shrink-0">
                     <DeskBar d={desk} stale={!!status.error} help={help} onHelp={setHelp} />
                     <Warnings list={desk.warnings} />
                     <AllBooksBar d={desk} open={false} onToggle={() => setPhonePane("all-params")} onUnits={setUnits} />
@@ -186,7 +186,9 @@ export function QuoterScreen() {
                 group: desk_,
                 node: (
                   <div className="flex h-full min-h-0 flex-col gap-2 overflow-y-auto">
-                    <QuoterSettings />
+                    <div className="shrink-0">
+                      <QuoterSettings />
+                    </div>
                     <div className="min-h-[60vh] flex-1">
                       <BulkParams d={desk} />
                     </div>
@@ -416,7 +418,7 @@ function DeskBar({ d, stale, help, onHelp }: { d: QuoterDeskStatus; stale: boole
   };
 
   return (
-    <section className="flex flex-wrap items-center gap-3 rounded-md border border-line bg-panel px-3 py-2">
+    <section className="flex flex-wrap items-center gap-3 rounded-md border border-line bg-panel px-3 py-2 max-md:py-3">
       <span className="text-sm font-semibold">Quoter</span>
       <span
         className={cx(
@@ -455,7 +457,7 @@ function DeskBar({ d, stale, help, onHelp }: { d: QuoterDeskStatus; stale: boole
         <CircleHelp size={12} className={help ? "text-info" : undefined} /> Help {help ? "on" : "off"}
       </Button>
       {stale && <span className="text-[11px] text-sell">· lost contact with the quoter, showing the last status</span>}
-      <div className="ml-auto flex items-center gap-3">
+      <div className="ml-auto flex items-center gap-3 max-md:ml-0 max-md:basis-full max-md:flex-wrap max-md:border-t max-md:border-line max-md:pt-2">
         <span className="num text-xs">
           <RateLimitItem d={d} />
         </span>
@@ -1752,16 +1754,17 @@ function pct(v: number | null | undefined) {
 }
 
 const barLabel = "text-[10px] font-semibold uppercase tracking-wider text-muted";
-const barItem = "flex items-baseline gap-1.5";
+// On a phone the pieces of an item wrap whole, rather than squeezing into a narrow column.
+const barItem = "flex items-baseline gap-1.5 max-md:flex-wrap max-md:gap-y-0.5";
 
 // A summary bar: a name, its figures on one baseline, and a button on the right that opens what
 // sits under it. The button never makes the bar taller.
 function SummaryBar({ name, children, button }: { name: string; children: ReactNode; button: ReactNode }) {
   return (
     // On a phone the name and buttons share the first line and the figures wrap below them.
-    <section className="num flex items-center gap-3 rounded-md border border-line bg-panel px-3 py-1.5 text-xs max-md:flex-wrap max-md:py-2">
+    <section className="num flex items-center gap-3 rounded-md border border-line bg-panel px-3 py-1.5 text-xs max-md:flex-wrap max-md:py-3">
       <span className={cx(barLabel, "w-[4.5rem] shrink-0 max-md:mr-auto max-md:w-auto")}>{name}</span>
-      <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-6 gap-y-1 max-md:order-last max-md:basis-full">{children}</div>
+      <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-6 gap-y-1 max-md:order-last max-md:basis-full max-md:gap-y-2.5">{children}</div>
       {button}
     </section>
   );
@@ -1937,7 +1940,7 @@ function RateLimitItem({ d }: { d: QuoterDeskStatus }) {
         "Hits are times the exchange rejected requests for its rate limit anyway; each one pauses every book's new orders and modifies for 1s, doubling up to 30s while it keeps happening."
       }
     >
-      <span className={barLabel}>Rate limit</span>
+      <span className={cx(barLabel, "max-md:basis-full")}>Rate limit</span>
       {rl?.used !== undefined && (
         <>
           <Usage used={rl.used} limit={perSec} unit="s" />

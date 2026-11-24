@@ -177,10 +177,10 @@ function Summary({
         </span>
       </span>
 
-      <span className={cx("ml-auto flex items-center", phone ? "min-w-0 gap-2" : "gap-4")}>
+      <span className={cx("ml-auto flex items-center", phone ? "min-w-0 flex-1 gap-2" : "gap-4")}>
         {/* Keeps its place at zero, so orders coming and going don't shift the prices beside it. */}
-        <span className={cx("min-w-[11ch] rounded bg-accent-soft px-1.5 text-center text-[10px] font-semibold text-accent", mine === 0 && (phone ? "hidden" : "invisible"), phone && "min-w-0")}>
-          {mine} open{phone ? "" : " here"}
+        <span className={cx("min-w-[11ch] rounded bg-accent-soft px-1.5 text-center text-[10px] font-semibold text-accent", mine === 0 && "invisible", phone && "hidden")}>
+          {mine} open here
         </span>
         <span className={cx("flex items-baseline gap-1.5", phone && "hidden")}>
           <span className="text-[10px] text-faint uppercase">Last</span>
@@ -201,7 +201,7 @@ function Summary({
           </span>
         </span>
         {/* A fixed width too, so switching to a longer symbol doesn't move everything left. */}
-        <select className={cx(selectClass, phone ? "w-36 min-w-0 shrink font-semibold" : "w-52 font-semibold")} value={symbol ?? ""} onChange={(ev) => setSymbol(ev.target.value)} aria-label="Book">
+        <select className={cx(selectClass, phone ? "w-auto min-w-0 flex-1 font-semibold" : "w-52 font-semibold")} value={symbol ?? ""} onChange={(ev) => setSymbol(ev.target.value)} aria-label="Book">
           {shown.map((i) => {
             const n = open.bySymbol.get(i.symbol) ?? 0;
             return (
