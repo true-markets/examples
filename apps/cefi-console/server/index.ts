@@ -29,9 +29,10 @@ if (existsSync("dist")) {
   app.get("*", serveStatic({ path: "./dist/index.html" }));
 }
 
-const server = serve({ fetch: app.fetch, port: config.port, hostname: "127.0.0.1" }, (info) => {
+const host = config.host ?? "127.0.0.1";
+const server = serve({ fetch: app.fetch, port: config.port, hostname: host }, (info) => {
   const where = config.mode === "live" ? `LIVE on ${config.environment} with ${config.keyFile}` : "DEMO against the built-in simulator";
-  console.log(`CeFi console server on http://127.0.0.1:${info.port} — ${where}`);
+  console.log(`CeFi console server on http://${host.includes(":") ? `[${host}]` : host}:${info.port} — ${where}`);
   if (config.mode === "live") console.log("Orders you place, modify or cancel here are real.");
   if (quoter) console.log(`Quoter screen: managing the cefi-quoter at ${quoter.url}`);
 });

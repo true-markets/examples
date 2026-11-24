@@ -34,6 +34,8 @@ export const HOSTS: Record<Environment, Hosts> = {
 
 export interface Config {
   port: number;
+  // The address to listen on. 127.0.0.1 unless API_HOST says otherwise (0.0.0.0 for every interface).
+  host?: string;
   mode: "live" | "demo";
   environment: Environment;
   keyFile?: string;
@@ -62,6 +64,7 @@ export function loadConfig(e: NodeJS.ProcessEnv = process.env): Config {
 
   return {
     port,
+    host: e.API_HOST || "127.0.0.1",
     mode,
     environment,
     keyFile,

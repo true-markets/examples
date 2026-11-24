@@ -6,7 +6,7 @@ It runs out of the box against a built-in simulator, so you can see it working b
 
 > [!WARNING]
 > - **With an API key, every action is real.** Orders, modifies, cancels, allocations and releases go to the live exchange. There is no test mode in production; set `TM_ENV=uat` to point at the UAT sandbox instead.
-> - **Run it on your own machine only.** The server holds your API key and has no login. It listens on 127.0.0.1; don't expose it.
+> - **Run it on your own machine only.** The server holds your API key and has no login. It listens on 127.0.0.1 by default. `API_HOST` in `.env` changes that: a LAN address such as `192.168.1.20`, or `0.0.0.0` for every interface, lets other devices on your network open it (`npm run dev` serves the web app on that address too, on port 5181). Anyone who can reach that address can trade with your key, so put your own access control in front of it.
 
 ## What's on the screen
 
