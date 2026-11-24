@@ -1,12 +1,12 @@
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeftRight, BookOpen, ListOrdered, NotebookPen, TriangleAlert, Wallet, X } from "lucide-react";
+import { ArrowLeftRight, BookOpen, LayoutGrid, ListOrdered, NotebookPen, TriangleAlert, Wallet, X } from "lucide-react";
 import { StrictMode, useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { isListed, useFillEnrichment, useFillHistory, useInstruments, useSession } from "./api.ts";
 import { Balances } from "./components/Balances.tsx";
 import { Header } from "./components/Header.tsx";
 import { Workspace } from "./components/Layout.tsx";
-import { Markets } from "./components/Markets.tsx";
+import { Markets, MarketsList } from "./components/Markets.tsx";
 import { OrderBook } from "./components/OrderBook.tsx";
 import { OrdersTable } from "./components/OrdersTable.tsx";
 import { DrawerProvider, PhoneScreen, usePhone, usePhonePane } from "./components/Phone.tsx";
@@ -97,7 +97,7 @@ function Toasts() {
 
 // The trading screen on a phone: the one-line market bar with the book picker, then one pane at a
 // time, picked from the menu.
-const TRADING_PANES = ["book", "ticket", "orders", "fills", "balances"] as const;
+const TRADING_PANES = ["markets", "book", "ticket", "orders", "fills", "balances"] as const;
 type TradingPane = (typeof TRADING_PANES)[number];
 
 function TradingPhone() {
@@ -119,6 +119,7 @@ function TradingPhone() {
           pane={pane}
           onPane={setPane}
           panes={[
+            { key: "markets", label: "Markets", icon: LayoutGrid, group, node: <MarketsList onPick={() => setPane("book")} /> },
             { key: "book", label: "Order book", icon: BookOpen, group, node: <OrderBook /> },
             { key: "ticket", label: "Ticket", icon: NotebookPen, group, node: <Ticket /> },
             { key: "orders", label: "Orders", icon: ListOrdered, group, node: <OrdersTable /> },

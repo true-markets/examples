@@ -53,6 +53,43 @@ export function Markets({ phone }: { phone?: boolean }) {
   );
 }
 
+// Every book as a tile, one under another, for the phone's Markets pane: your order totals across
+// every book first, then the tiles. Picking one selects it and calls onPick.
+export function MarketsList({ onPick }: { onPick: () => void }) {
+  const { data: instruments } = useInstruments();
+  const { symbol, setSymbol } = useUi();
+  useMarket();
+  const orders = useOrders();
+  const open = useMemo(() => summarize(orders), [orders]);
+  const shown = (instruments ?? []).filter((i) => isListed(i) || (open.bySymbol.get(i.symbol) ?? 0) > 0);
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-2 overflow-y-auto">
+      <div className="num flex shrink-0 flex-wrap items-baseline gap-x-4 gap-y-1 rounded-md border border-line bg-panel px-3 py-2 text-xs text-muted">
+        <span>
+          <span className="text-ink">{shown.length}</span> books
+        </span>
+        <span>
+          <span className="text-ink">{open.count}</span> open orders
+        </span>
+        <span title="Your open orders across every book, at their limit prices">
+          bids <span className="text-buy">{usd(open.bidUsd)}</span> · asks <span className="text-sell">{usd(open.askUsd)}</span>
+        </span>
+      </div>
+      <Tiles
+        shown={shown}
+        symbol={symbol}
+        setSymbol={(s) => {
+          setSymbol(s);
+          onPick();
+        }}
+        openBySymbol={open.bySymbol}
+        ordersBySymbol={open.orders}
+        columns={1}
+      />
+    </div>
+  );
+}
+
 interface OpenSummary {
   bySymbol: Map<string, number>;
   // The open orders themselves, by book.
@@ -83,14 +120,17 @@ function Tiles({
   setSymbol,
   openBySymbol,
   ordersBySymbol,
+  columns: fixed,
 }: {
   shown: Instrument[];
   symbol?: string;
   setSymbol: (s: string) => void;
   openBySymbol: Map<string, number>;
   ordersBySymbol: Map<string, OrderRow[]>;
+  // Two rows across the width unless set.
+  columns?: number;
 }) {
-  const columns = Math.max(1, Math.ceil(shown.length / 2));
+  const columns = fixed ?? Math.max(1, Math.ceil(shown.length / 2));
   return (
     <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
       {shown.map((i) => {
