@@ -14,8 +14,8 @@ const COLLAPSED_KEY = "cefi-console:markets-collapsed";
 // The market bar. Open, it shows one tile per instrument in two rows that fit the width: live top
 // of book and how many of your orders rest there. Collapsed, it is one line: a summary of your
 // orders across every book, then the selected book's top of book and a picker to switch books. Disabled
-// instruments are left out unless you still have orders on one.
-export function Markets() {
+// instruments are left out unless you still have orders on one. On a phone it is always the one line.
+export function Markets({ phone }: { phone?: boolean }) {
   const { data: instruments } = useInstruments();
   const { symbol, setSymbol } = useUi();
   useMarket();
@@ -29,6 +29,7 @@ export function Markets() {
   const open = useMemo(() => summarize(orders), [orders]);
   const shown = (instruments ?? []).filter((i) => isListed(i) || (open.bySymbol.get(i.symbol) ?? 0) > 0);
 
+  if (phone) return <Summary shown={shown} symbol={symbol} setSymbol={setSymbol} open={open} phone />;
   return (
     <div className="flex items-stretch gap-1.5">
       <div className="min-w-0 flex-1">
@@ -127,7 +128,20 @@ function Tiles({
 
 const NONE: OrderRow[] = [];
 
-function Summary({ shown, symbol, setSymbol, open }: { shown: Instrument[]; symbol?: string; setSymbol: (s: string) => void; open: OpenSummary }) {
+function Summary({
+  shown,
+  symbol,
+  setSymbol,
+  open,
+  phone,
+}: {
+  shown: Instrument[];
+  symbol?: string;
+  setSymbol: (s: string) => void;
+  open: OpenSummary;
+  // Just the selected book: its picker, bid and ask, and your orders there.
+  phone?: boolean;
+}) {
   const e = symbol ? store.ebbo.get(symbol) : undefined;
   const bid = Number(e?.info.best_bid?.price ?? 0);
   const ask = Number(e?.info.best_ask?.price ?? 0);
@@ -138,7 +152,7 @@ function Summary({ shown, symbol, setSymbol, open }: { shown: Instrument[]; symb
   // right-aligned), so a digit coming or going doesn't push its neighbours around.
   return (
     <div className="flex h-9 items-center gap-4 overflow-hidden rounded-md border border-line bg-panel px-2 text-xs whitespace-nowrap">
-      <span className="flex items-baseline gap-4 pl-1 text-muted">
+      <span className={cx("flex items-baseline gap-4 pl-1 text-muted", phone && "hidden")}>
         <span>
           <Slot ch={2} className="text-ink">
             {shown.length}
@@ -163,12 +177,12 @@ function Summary({ shown, symbol, setSymbol, open }: { shown: Instrument[]; symb
         </span>
       </span>
 
-      <span className="ml-auto flex items-center gap-4">
+      <span className={cx("ml-auto flex items-center", phone ? "min-w-0 gap-2" : "gap-4")}>
         {/* Keeps its place at zero, so orders coming and going don't shift the prices beside it. */}
-        <span className={cx("min-w-[11ch] rounded bg-accent-soft px-1.5 text-center text-[10px] font-semibold text-accent", mine === 0 && "invisible")}>
-          {mine} open here
+        <span className={cx("min-w-[11ch] rounded bg-accent-soft px-1.5 text-center text-[10px] font-semibold text-accent", mine === 0 && (phone ? "hidden" : "invisible"), phone && "min-w-0")}>
+          {mine} open{phone ? "" : " here"}
         </span>
-        <span className="flex items-baseline gap-1.5">
+        <span className={cx("flex items-baseline gap-1.5", phone && "hidden")}>
           <span className="text-[10px] text-faint uppercase">Last</span>
           <Slot ch={8} className="text-[13px] font-medium">
             {price(e?.info.last_trade?.price)}
@@ -182,12 +196,12 @@ function Summary({ shown, symbol, setSymbol, open }: { shown: Instrument[]; symb
           <Slot ch={8} align="left" className="text-sell">
             {price(e?.info.best_ask?.price)}
           </Slot>
-          <span className="text-[11px] text-muted">
+          <span className={cx("text-[11px] text-muted", phone && "hidden")}>
             <Slot ch={5}>{spreadBps !== undefined ? spreadBps.toFixed(1) : "—"}</Slot> bps
           </span>
         </span>
         {/* A fixed width too, so switching to a longer symbol doesn't move everything left. */}
-        <select className={cx(selectClass, "w-52 font-semibold")} value={symbol ?? ""} onChange={(ev) => setSymbol(ev.target.value)} aria-label="Book">
+        <select className={cx(selectClass, phone ? "w-36 min-w-0 shrink font-semibold" : "w-52 font-semibold")} value={symbol ?? ""} onChange={(ev) => setSymbol(ev.target.value)} aria-label="Book">
           {shown.map((i) => {
             const n = open.bySymbol.get(i.symbol) ?? 0;
             return (
