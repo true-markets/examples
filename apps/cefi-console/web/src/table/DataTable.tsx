@@ -168,6 +168,50 @@ export function DataTable<T>(p: DataTableProps<T>) {
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement>();
   // The column being dragged by its handle in the Columns menu.
   const [menuDrag, setMenuDrag] = useState<string>();
+  const menuList = useRef<HTMLDivElement>(null);
+  // While dragging, follow the pointer on the window: the row's own element can't, since moving it
+  // in the list takes it out of the page for a moment and the browser drops its pointer capture.
+  useEffect(() => {
+    if (!menuDrag) return;
+    const list = menuList.current;
+    const onMove = (e: PointerEvent) => {
+      if (!list) return;
+      // Near an edge of the list, scroll it.
+      const box = list.getBoundingClientRect();
+      if (e.clientY < box.top + 16) list.scrollTop -= 8;
+      else if (e.clientY > box.bottom - 16) list.scrollTop += 8;
+      // The dragged row goes before the first other row whose middle is below the pointer. Against
+      // the middles, a small wiggle can't swap two rows back and forth.
+      const below = [...list.querySelectorAll<HTMLElement>("[data-col]")].find((el) => {
+        if (el.dataset.col === menuDrag) return false;
+        const r = el.getBoundingClientRect();
+        return e.clientY < r.top + r.height / 2;
+      })?.dataset.col;
+      // Unchanged most of the time: keep the same layout then, so nothing re-renders or re-saves.
+      setLayout((l) => {
+        const rest = l.order.filter((x) => x !== menuDrag);
+        const to = below === undefined ? rest.length : rest.indexOf(below);
+        if (to < 0 || l.order.indexOf(menuDrag) === to) return l;
+        rest.splice(to, 0, menuDrag);
+        touched.current = true;
+        return { ...l, order: rest };
+      });
+    };
+    const onUp = () => setMenuDrag(undefined);
+    const select = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      document.body.style.userSelect = select;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+    // setLayout is stable; menuDrag is what starts and ends a drag.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menuDrag]);
   const [dragging, setDragging] = useState<string>();
   const [dropOn, setDropOn] = useState<string>();
 
@@ -384,7 +428,7 @@ export function DataTable<T>(p: DataTableProps<T>) {
         <Popover anchor={menuAnchor} onClose={() => setMenuAnchor(undefined)} width={250}>
           <div className="mb-1.5 font-semibold text-ink">Columns</div>
           <p className="mb-2 text-[10px] text-faint">Tick to show. Drag a row by its handle to reorder, or drag a header; drag a header&apos;s edge to resize.</p>
-          <div className="max-h-80 space-y-0.5 overflow-y-auto">
+          <div ref={menuList} className="max-h-80 space-y-0.5 overflow-y-auto">
             {layout.order.map((id, idx) => {
               const col = table.getColumn(id);
               if (!col) return null;
@@ -403,16 +447,8 @@ export function DataTable<T>(p: DataTableProps<T>) {
                     className={cx("touch-none rounded p-0.5 text-faint hover:text-ink", menuDrag === id ? "cursor-grabbing" : "cursor-grab")}
                     onPointerDown={(e) => {
                       e.preventDefault();
-                      e.currentTarget.setPointerCapture(e.pointerId);
                       setMenuDrag(id);
                     }}
-                    onPointerMove={(e) => {
-                      if (menuDrag !== id) return;
-                      const over = document.elementFromPoint(e.clientX, e.clientY)?.closest("[data-col]")?.getAttribute("data-col");
-                      if (over && over !== id) move(id, layout.order.indexOf(over));
-                    }}
-                    onPointerUp={() => setMenuDrag(undefined)}
-                    onPointerCancel={() => setMenuDrag(undefined)}
                     onKeyDown={(e) => {
                       if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
                       e.preventDefault();
