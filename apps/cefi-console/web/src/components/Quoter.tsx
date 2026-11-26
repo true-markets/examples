@@ -22,6 +22,7 @@ import {
 import { createContext, Fragment, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Panel as Pane } from "react-resizable-panels";
 import { Divider, pane, Split } from "./Layout.tsx";
+import { Help, ShowHelp } from "./help.tsx";
 import { OpenPnlView } from "./OpenPnl.tsx";
 import { DrawerSetting, PhoneScreen, usePhone, usePhonePane } from "./Phone.tsx";
 import type {
@@ -300,9 +301,7 @@ function Warnings({ list }: { list: string[] }) {
 
 // ---------- help text ----------
 
-// The explanations under parameters and panels are for learning the quoter; once you know it, the
-// Help switch in the Quoter bar hides them. The choice is kept per browser. Tooltips stay.
-const ShowHelp = createContext(true);
+// The Help switch (see help.tsx), kept per browser.
 const helpKey = "cefi-console:quoter-help";
 
 function useHelpSetting(): [boolean, (on: boolean) => void] {
@@ -346,10 +345,6 @@ function useStoredChoice<T extends string>(key: string, fallback: T, allowed: re
     [key],
   );
   return [v, set];
-}
-
-function Help({ children }: { children: ReactNode }) {
-  return useContext(ShowHelp) ? <>{children}</> : null;
 }
 
 // ---------- bps or dollars ----------

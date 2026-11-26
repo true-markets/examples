@@ -5,6 +5,7 @@ import type { QuoterDeskStatus } from "../../../shared/api.ts";
 import { price as fmtPrice, qty as fmtQty, quoteUnit } from "../format.ts";
 import { openPnl, type OpenPnlRow, type OpenPnlTotal } from "../open-pnl.ts";
 import { DataTable, type ColMeta } from "../table/DataTable.tsx";
+import { Help } from "./help.tsx";
 import { usePhone } from "./Phone.tsx";
 import { cx, Empty, Panel, SymbolLink } from "./ui.tsx";
 
@@ -21,16 +22,21 @@ const STARTING_TITLE =
 export function OpenPnlView({ d, onOpen }: { d: QuoterDeskStatus; onOpen: (symbol: string) => void }) {
   const phone = usePhone();
   const r = openPnl(d);
+  // Explanations, hidden with the Help switch; the columns' tooltips say the same.
   const rule = (
-    <p className="flex shrink-0 items-start gap-1.5 border-b border-line px-3 py-2 text-[11px] leading-relaxed text-muted">
-      <Info size={12} className="mt-0.5 shrink-0" />
-      {RULE}
-    </p>
+    <Help>
+      <p className="flex shrink-0 items-start gap-1.5 border-b border-line px-3 py-2 text-[11px] leading-relaxed text-muted">
+        <Info size={12} className="mt-0.5 shrink-0" />
+        {RULE}
+      </p>
+    </Help>
   );
   const note = (
-    <p className="shrink-0 px-3 py-2 text-[11px] leading-relaxed text-faint">
-      Reset on a book&apos;s Position card makes what it holds now its starting position: position, average cost and PnL go to zero.
-    </p>
+    <Help>
+      <p className="shrink-0 px-3 py-2 text-[11px] leading-relaxed text-faint">
+        Reset on a book&apos;s Position card makes what it holds now its starting position: position, average cost and PnL go to zero.
+      </p>
+    </Help>
   );
   return (
     <Panel title="Open PnL" className="h-full" actions={<Totals totals={r.totals} />}>
