@@ -222,6 +222,7 @@ func run() error {
 
 func paperVenue(cfg Config, log *slog.Logger) (*venue, *paper.Exchange) {
 	x := paper.New("USDC", cfg.PaperBalances)
+	x.MakerFeeBps, x.TakerFeeBps = cfg.PaperMakerFeeBps, cfg.PaperTakerFeeBps
 	var parts []string
 	for asset, amt := range cfg.PaperBalances {
 		parts = append(parts, amt.String()+" "+asset)
@@ -324,7 +325,16 @@ func liveVenue(ctx context.Context, cfg Config, log *slog.Logger) (*venue, error
 	// data, so order events never queue behind a burst of market data. The drop copy is account
 	// wide; the desk routes each message to its book.
 	var marketFeed *tm.Feed
-	v.onAdd = func(m quoter.Market) { marketFeed.Add("EBBO", m.Symbol) }
+	// DEPTH is for pricing what closing a book's position would fetch, level by level.
+	v.onAdd = func(m quoter.Market) {
+		marketFeed.Add("EBBO", m.Symbol)
+		marketFeed.Add("DEPTH", m.Symbol)
+	}
+	v.desk.ResyncDepth = func(symbol string) {
+		if marketFeed != nil {
+			marketFeed.Resubscribe("DEPTH", symbol)
+		}
+	}
 	v.start = func(feedCtx context.Context, d *quoter.Desk) error {
 		dropCopy := &tm.Feed{
 			Name: "dropcopy", URL: hosts.WS, Key: key, OrganizationID: orgID,

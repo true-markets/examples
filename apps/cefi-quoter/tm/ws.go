@@ -54,6 +54,19 @@ type DropCopy struct {
 	Timestamp    string `json:"timestamp"`
 }
 
+// Depth is one DEPTH message: a whole side of the book on a SNAPSHOT, or the levels that changed on
+// an UPDATE. A level's qty is its new size; 0 removes it.
+type Depth struct {
+	Symbol string  `json:"symbol"`
+	Bids   []Level `json:"bids"`
+	Asks   []Level `json:"asks"`
+}
+
+type Level struct {
+	Price string `json:"price"`
+	Qty   string `json:"qty"`
+}
+
 // EBBO is the exchange's best bid and offer for one symbol.
 type EBBO struct {
 	Symbol string `json:"symbol"`
@@ -87,7 +100,13 @@ type Feed struct {
 
 	mu   sync.Mutex
 	live bool
-	adds chan Subscription
+	adds chan request
+}
+
+// request is one SUBSCRIBE, or UNSUBSCRIBE, waiting its turn on the connection.
+type request struct {
+	Subscription
+	unsubscribe bool
 }
 
 // Add subscribes to more items on a channel: now if connected, and on every reconnect.
@@ -108,8 +127,27 @@ func (f *Feed) Add(channel string, items ...string) {
 	}
 	if f.live && len(fresh) > 0 {
 		select {
-		case f.adds <- Subscription{Channel: channel, Items: fresh}:
+		case f.adds <- request{Subscription: Subscription{Channel: channel, Items: fresh}}:
 		default: // the session is backed up; it re-subscribes everything on its next reconnect
+		}
+	}
+}
+
+// Resubscribe drops one item and subscribes to it again, for a fresh snapshot: after a DEPTH
+// update skipped a sequence number, say. Nothing happens while disconnected, since the next
+// connection subscribes from scratch.
+func (f *Feed) Resubscribe(channel, item string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.live {
+		return
+	}
+	s := Subscription{Channel: channel, Items: []string{item}}
+	for _, r := range []request{{Subscription: s, unsubscribe: true}, {Subscription: s}} {
+		select {
+		case f.adds <- r:
+		default:
+			return
 		}
 	}
 }
@@ -171,7 +209,7 @@ func (f *Feed) session(ctx context.Context) error {
 	}()
 
 	f.mu.Lock()
-	f.live, f.adds = true, make(chan Subscription, 64)
+	f.live, f.adds = true, make(chan request, 64)
 	adds := f.adds
 	f.mu.Unlock()
 	defer func() {
@@ -205,7 +243,10 @@ func (f *Feed) session(ctx context.Context) error {
 
 	// The exchange refuses a signed request while an earlier one is still authenticating, so
 	// requests go one at a time: each waits for a confirmation, or for 5 seconds.
-	queue := f.subscriptions()
+	var queue []request
+	for _, s := range f.subscriptions() {
+		queue = append(queue, request{Subscription: s})
+	}
 	confirmed := map[string]bool{}
 	var waitTimer <-chan time.Time
 	sendNext := func() error {
@@ -215,14 +256,14 @@ func (f *Feed) session(ctx context.Context) error {
 		next := queue[0]
 		queue = queue[1:]
 		waitTimer = time.After(5 * time.Second)
-		return conn.WriteJSON(f.signed(next))
+		return conn.WriteJSON(f.signed(next.Subscription, next.unsubscribe))
 	}
 	// Anything the exchange didn't confirm (it rate limits subscription changes) is asked for again.
-	missing := func() []Subscription {
-		var out []Subscription
+	missing := func() []request {
+		var out []request
 		for _, s := range f.subscriptions() {
 			if !confirmed[s.Channel] {
-				out = append(out, s)
+				out = append(out, request{Subscription: s})
 			}
 		}
 		return out
@@ -293,8 +334,9 @@ func (f *Feed) session(ctx context.Context) error {
 	}
 }
 
-// signed builds the SUBSCRIBE request: the signature is over timestamp + "TRUEXWS" + key + path.
-func (f *Feed) signed(s Subscription) map[string]any {
+// signed builds the SUBSCRIBE (or UNSUBSCRIBE) request: the signature is over
+// timestamp + "TRUEXWS" + key + path.
+func (f *Feed) signed(s Subscription, unsubscribe bool) map[string]any {
 	path := "/v1/cefi/market"
 	if u, err := url.Parse(f.URL); err == nil && u.Path != "" {
 		path = u.Path
@@ -305,7 +347,7 @@ func (f *Feed) signed(s Subscription) map[string]any {
 	}
 	ts := UnixSeconds()
 	msg := map[string]any{
-		"type":       "SUBSCRIBE",
+		"type":       map[bool]string{false: "SUBSCRIBE", true: "UNSUBSCRIBE"}[unsubscribe],
 		"channels":   []string{s.Channel},
 		"item_names": items,
 		"timestamp":  ts,

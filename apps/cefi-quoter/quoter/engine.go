@@ -88,6 +88,7 @@ type Engine struct {
 	bestBidQty  decimal.Decimal
 	bestAskQty  decimal.Decimal
 	ebboAt      time.Time
+	depth       *depthBook // the exchange's book, for what closing the position would fetch
 	lastTake    time.Time
 	takeView    *TakeView
 	journal     *Journal
@@ -155,6 +156,7 @@ type Event struct {
 
 func NewEngine(market Market, params Params, venue Venue, ledger *Ledger, tx Transport, book *Book, enabled bool, log *slog.Logger) *Engine {
 	e := &Engine{
+		depth:    newDepthBook(),
 		market:   market,
 		log:      log,
 		venue:    venue,
@@ -238,6 +240,25 @@ func (e *Engine) OnEBBO(d tm.EBBO) {
 		e.bestAskQty = dec(d.Info.BestAsk.Qty)
 	}
 	e.ebboAt = time.Now()
+	e.mu.Unlock()
+}
+
+// OnDepth takes one DEPTH message for this book. It returns false when an update was missed, so
+// the caller can ask the exchange for a fresh snapshot.
+func (e *Engine) OnDepth(update string, d tm.Depth, seqnum string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.depth.apply(update, d, seqnum)
+}
+
+// AddFee adds what the exchange charged for one of this book's fills, once it's known: the fee
+// isn't on the drop copy, so it comes later from the account's fills. A fill from before the
+// position was last reset isn't counted in it, so neither is its fee.
+func (e *Engine) AddFee(f FeeAt) {
+	e.mu.Lock()
+	if !f.At.Before(e.since) {
+		e.pos.fees = e.pos.fees.Add(f.Fee)
+	}
 	e.mu.Unlock()
 }
 
@@ -794,7 +815,8 @@ func (e *Engine) maybeResync(ctx context.Context) {
 type position struct {
 	qty      decimal.Decimal // + long, - short, in base
 	avgCost  decimal.Decimal
-	realized decimal.Decimal // in quote
+	realized decimal.Decimal // in quote, before fees
+	fees     decimal.Decimal // in quote: what the exchange charged for the fills counted here
 	volBase  decimal.Decimal
 	volQuote decimal.Decimal
 }

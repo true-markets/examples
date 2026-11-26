@@ -62,8 +62,12 @@ type DeskConfig struct {
 	Subscribe func(ref string)
 	// Suggest lists the reference sources for an underlying. Optional.
 	Suggest func(ctx context.Context, underlying string, stock bool) []reference.Source
-	// OnAdd subscribes the venue's feeds for a new book (its EBBO). Optional.
+	// OnAdd subscribes the venue's feeds for a new book (its EBBO and DEPTH). Optional.
 	OnAdd func(Market)
+	// ResyncDepth asks the market feed for a fresh DEPTH snapshot of one book, after an update was
+	// missed. Optional: without it the book prices exits off the best bid and ask until the feed
+	// reconnects.
+	ResyncDepth func(symbol string)
 	// OnReference sees every book's blended reference price (the paper exchange fills from it).
 	// Optional.
 	OnReference func(symbol string, t reference.Tick)
@@ -84,10 +88,15 @@ type Desk struct {
 	ledger  *Ledger
 	pacer   *Pacer
 	journal *Journal
-	log     *slog.Logger
-	catalog map[string]Listing
-	names   map[string]string // asset id -> symbol
-	started time.Time
+	// feesReadAt is when the account's fills were last read for their fees. Only the desk loop
+	// touches it.
+	feesReadAt time.Time
+	// resyncAt is when each book last asked for a fresh DEPTH snapshot. Only OnMarket touches it.
+	resyncAt map[string]time.Time
+	log      *slog.Logger
+	catalog  map[string]Listing
+	names    map[string]string // asset id -> symbol
+	started  time.Time
 
 	mu           sync.Mutex
 	ctx          context.Context
@@ -122,6 +131,7 @@ func NewDesk(cfg DeskConfig) *Desk {
 		ledger:       NewLedger(),
 		pacer:        NewPacer(cfg.OrderRate, cfg.OrderRatePerMin),
 		journal:      NewJournal(),
+		resyncAt:     map[string]time.Time{},
 		log:          cfg.Log,
 		catalog:      map[string]Listing{},
 		names:        map[string]string{},
@@ -539,6 +549,7 @@ func (d *Desk) Run(ctx context.Context) {
 	lastSave := time.Now()
 	for {
 		d.maybeReadBalances(ctx)
+		d.maybeReadFees(ctx)
 		if time.Since(lastSave) >= stateEvery {
 			d.SaveState(false)
 			lastSave = time.Now()
@@ -589,6 +600,36 @@ func (d *Desk) maybeReadBalances(ctx context.Context) {
 		}
 		sort.Strings(parts)
 		d.log.Info("balances read", "free", strings.Join(parts, ", "))
+	}
+}
+
+// FeeSource is a venue that lists the account's fills with the fee charged for each.
+type FeeSource interface {
+	Trades(ctx context.Context, max int) ([]tm.TradeFill, error)
+}
+
+// maybeReadFees gives recent fills their fees. The drop copy doesn't carry the fee, so while any
+// fill from the last hour is without one, the account's fills are read on the balance cadence
+// and each fee goes to its trade and its book's position.
+func (d *Desk) maybeReadFees(ctx context.Context) {
+	src, ok := d.cfg.Venue.(FeeSource)
+	if !ok || time.Since(d.feesReadAt) < balanceEvery || !d.journal.WaitingForFees(time.Now()) {
+		return
+	}
+	d.feesReadAt = time.Now()
+	fills, err := src.Trades(ctx, 3)
+	if err != nil {
+		if ctx.Err() == nil {
+			d.log.Warn("reading fills for their fees failed", "err", err)
+		}
+		return
+	}
+	for symbol, fees := range d.journal.ApplyFees(fills) {
+		if e := d.Engine(symbol); e != nil {
+			for _, f := range fees {
+				e.AddFee(f)
+			}
+		}
 	}
 }
 
@@ -643,8 +684,25 @@ func (d *Desk) OnDropCopy(m tm.Message) {
 	}
 }
 
-// OnMarket routes an EBBO update to its book.
+// OnMarket routes an EBBO or DEPTH update to its book.
 func (d *Desk) OnMarket(m tm.Message) {
+	if m.Channel == "DEPTH" && len(m.Data) > 0 && m.Update != "SNAPSHOT_COMPLETE" {
+		var dp tm.Depth
+		if json.Unmarshal(m.Data, &dp) != nil {
+			return
+		}
+		e := d.Engine(dp.Symbol)
+		if e == nil || e.OnDepth(m.Update, dp, string(m.Seqnum)) {
+			return
+		}
+		// A missed update: ask for a fresh snapshot, at most every few seconds per book.
+		if d.cfg.ResyncDepth != nil && time.Since(d.resyncAt[dp.Symbol]) > 5*time.Second {
+			d.resyncAt[dp.Symbol] = time.Now()
+			d.log.Info("depth update missed, asking for a fresh snapshot", "book", dp.Symbol)
+			d.cfg.ResyncDepth(dp.Symbol)
+		}
+		return
+	}
 	if m.Channel != "EBBO" || len(m.Data) == 0 {
 		return
 	}
@@ -819,6 +877,7 @@ type Totals struct {
 	Quoting       int             `json:"quoting"`
 	RealizedPnl   decimal.Decimal `json:"realizedPnl"`
 	UnrealizedPnl decimal.Decimal `json:"unrealizedPnl"`
+	Fees          decimal.Decimal `json:"fees"`
 	VolumeQuote   decimal.Decimal `json:"volumeQuote"`
 	Orders        int             `json:"orders"`
 	Stats         Stats           `json:"stats"`
@@ -899,6 +958,7 @@ func totals(books []Summary) []Totals {
 		}
 		t.RealizedPnl = t.RealizedPnl.Add(b.RealizedPnl)
 		t.UnrealizedPnl = t.UnrealizedPnl.Add(b.UnrealizedPnl)
+		t.Fees = t.Fees.Add(b.Fees)
 		t.VolumeQuote = t.VolumeQuote.Add(b.VolumeQuote)
 		t.Orders += b.Orders
 		st := b.Stats

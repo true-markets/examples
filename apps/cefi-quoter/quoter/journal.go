@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
+
+	"github.com/true-markets/examples/apps/cefi-quoter/tm"
 )
 
 // The journal keeps every fill this run, with how good it was when it happened and how good it
@@ -55,6 +57,14 @@ type Trade struct {
 	// Unpriced: filled while the book had no reference price (just after a start, or with the
 	// sources down). Like a recovered fill, it's counted but left out of the averages.
 	Unpriced bool `json:"unpriced,omitempty"`
+	// OrderID is the exchange's id for the order that filled; the fee is found by it. Empty for a
+	// fill the quoter couldn't tie to an exchange order, which then never gets a fee.
+	OrderID string `json:"orderId,omitempty"`
+	// Fee is what the exchange charged, in the quote currency: notional × FeeBps. The drop copy
+	// doesn't carry it, so it's nil until the account's fills are next read (every few seconds).
+	Fee       *decimal.Decimal `json:"fee"`
+	FeeBps    *float64         `json:"feeBps"`
+	Liquidity string           `json:"liquidity,omitempty"` // MAKER, TAKER or SETTER
 	// resumed is when this run restored the trade: a mark-out that came due before then was
 	// missed, however recently.
 	resumed time.Time
@@ -96,7 +106,7 @@ func (j *Journal) Add(m Market, f Fill, refMid decimal.Decimal) {
 	t := &Trade{
 		ID: j.nextID, Time: f.Time, Symbol: m.Symbol, Quote: m.QuoteSymbol, Side: f.Side, Kind: kind, Level: f.Level,
 		Qty: f.Qty, Price: f.Price, Notional: f.Qty.Mul(f.Price), RefMid: refMid, EdgeBps: favor(f.Side, f.Price, refMid),
-		Markouts: make([]*float64, len(MarkoutHorizons)),
+		Markouts: make([]*float64, len(MarkoutHorizons)), OrderID: f.OrderID,
 	}
 	if t.Time.IsZero() {
 		t.Time = time.Now()
@@ -125,7 +135,7 @@ func (j *Journal) addUnmeasured(m Market, f Fill, recovered bool) {
 	j.trades = append(j.trades, &Trade{
 		ID: j.nextID, Time: f.Time, Symbol: m.Symbol, Quote: m.QuoteSymbol, Side: f.Side, Kind: kind, Level: f.Level,
 		Qty: f.Qty, Price: f.Price, Notional: f.Qty.Mul(f.Price), Markouts: make([]*float64, len(MarkoutHorizons)),
-		Recovered: recovered, Unpriced: !recovered,
+		Recovered: recovered, Unpriced: !recovered, OrderID: f.OrderID,
 	})
 	if t := j.trades[len(j.trades)-1]; t.Time.IsZero() {
 		t.Time = time.Now()
@@ -133,6 +143,63 @@ func (j *Journal) addUnmeasured(m Market, f Fill, recovered bool) {
 	if len(j.trades) > journalSize {
 		j.trades = j.trades[len(j.trades)-journalSize:]
 	}
+}
+
+// feeWait is how long a fill waits for its fee. Past this it's left without one, rather than
+// paging ever further back through the account's fills for it.
+const feeWait = time.Hour
+
+// WaitingForFees says whether any fill from the last hour still has no fee.
+func (j *Journal) WaitingForFees(now time.Time) bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	for i := len(j.trades) - 1; i >= 0; i-- {
+		t := j.trades[i]
+		if now.Sub(t.Time) > feeWait {
+			break
+		}
+		if t.Fee == nil && t.OrderID != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// ApplyFees gives fills their fees from the account's fills (GET /orders/trade): each fill without
+// one, on an order found there, is charged that order's fee rate on its own notional. It returns
+// the fees it added, by book, each with when its fill happened. An order fills at one rate for every match, so a fill whose own
+// match isn't in the list yet is still charged right.
+func (j *Journal) ApplyFees(fills []tm.TradeFill) map[string][]FeeAt {
+	type rate struct {
+		bps decimal.Decimal
+		liq string
+	}
+	byOrder := map[string]rate{}
+	for _, f := range fills {
+		if bps, err := decimal.NewFromString(f.FeeBps); err == nil && f.OrderID != "" {
+			byOrder[string(f.OrderID)] = rate{bps, f.Liquidity}
+		}
+	}
+	added := map[string][]FeeAt{}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	for _, t := range j.trades {
+		r, ok := byOrder[t.OrderID]
+		if t.Fee != nil || t.OrderID == "" || !ok {
+			continue
+		}
+		fee := t.Notional.Mul(r.bps).Div(tenK)
+		bps := r.bps.InexactFloat64()
+		t.Fee, t.FeeBps, t.Liquidity = &fee, &bps, r.liq
+		added[t.Symbol] = append(added[t.Symbol], FeeAt{Fee: fee, At: t.Time})
+	}
+	return added
+}
+
+// FeeAt is one fill's fee, and when the fill happened.
+type FeeAt struct {
+	Fee decimal.Decimal
+	At  time.Time
 }
 
 // Snapshot copies the journal for the state file.
@@ -224,8 +291,13 @@ type TradeSummary struct {
 	Retention []*float64      `json:"retention"` // mark-out over edge at fill, per horizon
 	Marked    []int           `json:"marked"`    // trades counted in each mark-out
 	MarkedPnl []*float64      `json:"markedPnl"` // mark-out in quote currency, summed
-	ByKind    map[string]int  `json:"byKind"`
-	Horizons  []int           `json:"horizonsSecs"`
+	// Fees is what the exchange charged for the trades whose fee is known, in quote currency;
+	// FeeBps is the notional-weighted rate over them. FeesPending counts trades still waiting.
+	Fees        float64        `json:"fees"`
+	FeeBps      *float64       `json:"feeBps"`
+	FeesPending int            `json:"feesPending"`
+	ByKind      map[string]int `json:"byKind"`
+	Horizons    []int          `json:"horizonsSecs"`
 }
 
 // TradesReport is the journal for the management API: newest first, with summaries.
@@ -268,9 +340,16 @@ func summarize(symbol string, trades []*Trade, horizons []int) TradeSummary {
 		Markouts: make([]*float64, n), Retention: make([]*float64, n), Marked: make([]int, n), MarkedPnl: make([]*float64, n)}
 	var edgeW, w float64
 	markW, markN, edgeAtMark, pnl := make([]float64, n), make([]float64, n), make([]float64, n), make([]float64, n)
+	var feeW float64
 	for _, t := range trades {
 		s.ByKind[t.Kind]++
 		s.Notional = s.Notional.Add(t.Notional)
+		if t.Fee != nil {
+			s.Fees += t.Fee.InexactFloat64()
+			feeW += t.Notional.InexactFloat64()
+		} else if t.OrderID != "" && time.Since(t.Time) <= feeWait {
+			s.FeesPending++
+		}
 		if t.Recovered || t.Unpriced {
 			continue // no fair value to measure it against
 		}
@@ -287,6 +366,10 @@ func summarize(symbol string, trades []*Trade, horizons []int) TradeSummary {
 			edgeAtMark[i] += t.EdgeBps * notional
 			pnl[i] += *m / 10_000 * notional
 		}
+	}
+	if feeW > 0 {
+		v := s.Fees / feeW * 10_000
+		s.FeeBps = &v
 	}
 	if w > 0 {
 		v, p := edgeW/w, edgeW/10_000
