@@ -148,3 +148,19 @@ func TestResetPosition(t *testing.T) {
 		t.Fatalf("after reset %+v %+v", s.Position, s.Stats)
 	}
 }
+
+// The book summary carries what the open PnL is made of: the position, its average cost, and
+// when the position started counting.
+func TestSummaryExplainsOpenPnl(t *testing.T) {
+	desk := startDesk(t, newFake(map[string]string{"btc": "1", "usdc": "100000"}))
+	e := addBook(t, desk, "BTC-USDC", testParams())
+	fillBook(e, Buy, "0.002", "50000")
+	fillBook(e, Buy, "0.002", "51000")
+	s := e.Summary()
+	if !s.Position.Equal(d("0.004")) || !s.AvgCost.Equal(d("50500")) {
+		t.Fatalf("position %s avg %s", s.Position, s.AvgCost)
+	}
+	if !s.PositionSince.Equal(e.Status().Position.Since) || s.PositionSince.IsZero() {
+		t.Fatalf("since %v", s.PositionSince)
+	}
+}

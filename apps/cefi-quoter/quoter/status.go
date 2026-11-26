@@ -201,32 +201,37 @@ func (e *Engine) emptySideReasonLocked(side Side, mid decimal.Decimal) string {
 
 // Summary is one line per book for the book list.
 type Summary struct {
-	Market        Market           `json:"market"`
-	Enabled       bool             `json:"enabled"`
-	State         string           `json:"state"`
-	Reason        string           `json:"reason,omitempty"`
-	Reference     *decimal.Decimal `json:"reference"`
-	Position      decimal.Decimal  `json:"position"`
-	RealizedPnl   decimal.Decimal  `json:"realizedPnl"`
-	UnrealizedPnl decimal.Decimal  `json:"unrealizedPnl"`
-	Orders        int              `json:"orders"`
-	Fills         int              `json:"fills"`
-	HeldBase      decimal.Decimal  `json:"heldBase"`
-	HeldQuote     decimal.Decimal  `json:"heldQuote"`
-	BudgetBase    decimal.Decimal  `json:"budgetBase"`
-	BudgetQuote   decimal.Decimal  `json:"budgetQuote"`
-	MaxQuoteAlloc decimal.Decimal  `json:"maxQuoteAlloc"`
-	MaxBaseAlloc  decimal.Decimal  `json:"maxBaseAlloc"`
-	VolumeQuote   decimal.Decimal  `json:"volumeQuote"`
-	Stats         Stats            `json:"stats"`
-	BaseCapped    bool             `json:"-"`
+	Market    Market           `json:"market"`
+	Enabled   bool             `json:"enabled"`
+	State     string           `json:"state"`
+	Reason    string           `json:"reason,omitempty"`
+	Reference *decimal.Decimal `json:"reference"`
+	Position  decimal.Decimal  `json:"position"`
+	// AvgCost and PositionSince explain the open PnL: (reference − avg cost) × position, counting
+	// the book's own fills since PositionSince.
+	AvgCost       decimal.Decimal `json:"avgCost"`
+	PositionSince time.Time       `json:"positionSince"`
+	RealizedPnl   decimal.Decimal `json:"realizedPnl"`
+	UnrealizedPnl decimal.Decimal `json:"unrealizedPnl"`
+	Orders        int             `json:"orders"`
+	Fills         int             `json:"fills"`
+	HeldBase      decimal.Decimal `json:"heldBase"`
+	HeldQuote     decimal.Decimal `json:"heldQuote"`
+	BudgetBase    decimal.Decimal `json:"budgetBase"`
+	BudgetQuote   decimal.Decimal `json:"budgetQuote"`
+	MaxQuoteAlloc decimal.Decimal `json:"maxQuoteAlloc"`
+	MaxBaseAlloc  decimal.Decimal `json:"maxBaseAlloc"`
+	VolumeQuote   decimal.Decimal `json:"volumeQuote"`
+	Stats         Stats           `json:"stats"`
+	BaseCapped    bool            `json:"-"`
 }
 
 func (e *Engine) Summary() Summary {
 	s := e.Status()
 	out := Summary{
 		Market: s.Market, Enabled: s.Enabled, State: s.State, Reason: s.Reason,
-		Position: s.Position.Qty, RealizedPnl: s.Position.RealizedPnl, UnrealizedPnl: s.Position.UnrealizedPnl,
+		Position: s.Position.Qty, AvgCost: s.Position.AvgCost, PositionSince: s.Position.Since,
+		RealizedPnl: s.Position.RealizedPnl, UnrealizedPnl: s.Position.UnrealizedPnl,
 		Orders: len(s.Orders), Fills: s.Stats.Fills, HeldBase: s.Balances.HeldBase, HeldQuote: s.Balances.HeldQuote,
 		BudgetBase: s.Balances.BudgetBase, BudgetQuote: s.Balances.BudgetQuote,
 		MaxQuoteAlloc: s.Params.MaxQuoteAlloc, MaxBaseAlloc: s.Params.MaxBaseAlloc,

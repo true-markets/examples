@@ -13,6 +13,7 @@ import {
   Plus,
   Receipt,
   RotateCcw,
+  Scale,
   SlidersHorizontal,
   Square,
   Trash2,
@@ -21,6 +22,7 @@ import {
 import { createContext, Fragment, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Panel as Pane } from "react-resizable-panels";
 import { Divider, pane, Split } from "./Layout.tsx";
+import { OpenPnlView } from "./OpenPnl.tsx";
 import { DrawerSetting, PhoneScreen, usePhone, usePhonePane } from "./Phone.tsx";
 import type {
   QuoterBookSummary,
@@ -79,7 +81,7 @@ export function QuoterScreen() {
   const [help, setHelp] = useHelpSetting();
   const [units, setUnits] = useStoredChoice<Units>("cefi-console:quoter-units", "bps", ["bps", "usd"]);
   // At most one breakdown open at a time; it takes the screen below the bars in place of the books.
-  const [open, setOpen] = useStoredChoice<"none" | "edge" | "params">("cefi-console:quoter-breakdown", "none", ["none", "edge", "params"]);
+  const [open, setOpen] = useStoredChoice<"none" | "edge" | "params" | "pnl">("cefi-console:quoter-breakdown", "none", ["none", "edge", "params", "pnl"]);
   // On a phone, one pane at a time in place of the breakdowns.
   const phone = usePhone();
   const [phonePane, setPhonePane] = usePhonePane<QuoterPane>("quoter", "ladder", QUOTER_PANES);
@@ -162,9 +164,9 @@ export function QuoterScreen() {
                 group: desk_,
                 node: (
                   <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto *:shrink-0">
-                    <DeskBar d={desk} stale={!!status.error} help={help} onHelp={setHelp} />
+                    <DeskBar d={desk} stale={!!status.error} help={help} onHelp={setHelp} params={false} onParams={() => setPhonePane("all-params")} />
                     <Warnings list={desk.warnings} />
-                    <AllBooksBar d={desk} open={false} onToggle={() => setPhonePane("all-params")} onUnits={setUnits} />
+                    <AllBooksBar d={desk} open={false} onToggle={() => setPhonePane("open-pnl")} onUnits={setUnits} />
                     <ActivityBar d={desk} open={false} onToggle={() => setPhonePane("trades")} />
                   </div>
                 ),
@@ -179,6 +181,7 @@ export function QuoterScreen() {
               },
               { key: "balances", label: "Balances", icon: Wallet, group: desk_, node: <SharedBalancesPanel d={desk} onOpen={select} /> },
               { key: "trades", label: "Trades", icon: Receipt, group: desk_, note: desk.trades.trades || undefined, node: <TradesView onOpen={select} /> },
+              { key: "open-pnl", label: "Open PnL", icon: Scale, group: desk_, node: <OpenPnlView d={desk} onOpen={select} /> },
               {
                 key: "all-params",
                 label: "All-books parameters",
@@ -212,7 +215,14 @@ export function QuoterScreen() {
     <ShowHelp.Provider value={help}>
       <ShowUnits.Provider value={units}>
         <div className="flex h-full min-h-0 flex-col gap-2">
-          <DeskBar d={desk} stale={!!status.error} help={help} onHelp={setHelp} />
+          <DeskBar
+            d={desk}
+            stale={!!status.error}
+            help={help}
+            onHelp={setHelp}
+            params={shownOpen === "params"}
+            onParams={(o) => setOpen(o ? "params" : "none")}
+          />
           <Warnings list={desk.warnings} />
           <div className="min-h-0 flex-1">
             <Split id="quoter" orientation="horizontal">
@@ -234,11 +244,16 @@ export function QuoterScreen() {
               <Divider />
               <Pane id="quoter-book" defaultSize="72" minSize="40">
                 <div className={cx(pane, "flex flex-col gap-2")}>
-                  <AllBooksBar d={desk} open={shownOpen === "params"} onToggle={(o) => setOpen(o ? "params" : "none")} onUnits={setUnits} />
+                  <AllBooksBar d={desk} open={shownOpen === "pnl"} onToggle={(o) => setOpen(o ? "pnl" : "none")} onUnits={setUnits} />
                   <ActivityBar d={desk} open={shownOpen === "edge"} onToggle={(o) => setOpen(o ? "edge" : "none")} />
                   {shownOpen === "edge" && (
                     <div className="min-h-0 flex-1">
                       <TradesView onOpen={select} />
+                    </div>
+                  )}
+                  {shownOpen === "pnl" && (
+                    <div className="min-h-0 flex-1">
+                      <OpenPnlView d={desk} onOpen={select} />
                     </div>
                   )}
                   {shownOpen === "params" && (
@@ -406,7 +421,22 @@ function StateBadge({ state }: { state: QuoterStatus["state"] }) {
 
 // ---------- the whole quoter ----------
 
-function DeskBar({ d, stale, help, onHelp }: { d: QuoterDeskStatus; stale: boolean; help: boolean; onHelp: (on: boolean) => void }) {
+function DeskBar({
+  d,
+  stale,
+  help,
+  onHelp,
+  params,
+  onParams,
+}: {
+  d: QuoterDeskStatus;
+  stale: boolean;
+  help: boolean;
+  onHelp: (on: boolean) => void;
+  // The all-books parameter editor, opened from the far right.
+  params: boolean;
+  onParams: (open: boolean) => void;
+}) {
   const control = useQuoterControl();
   const [confirm, setConfirm] = useState(false);
   const live = d.environment === "production";
@@ -465,6 +495,15 @@ function DeskBar({ d, stale, help, onHelp }: { d: QuoterDeskStatus; stale: boole
           <Button disabled={control.isPending} onClick={() => (live ? setConfirm(true) : control.mutate({ action: "start" }))}>
             <Play size={12} /> Start all
           </Button>
+        )}
+        {d.books.length > 0 && (
+          <OpenButton
+            open={params}
+            onToggle={onParams}
+            icon={<SlidersHorizontal size={12} />}
+            label="Parameters"
+            title={params ? "Close the all-books parameter editor" : "Edit parameters across every book"}
+          />
         )}
       </div>
       {confirm && (
@@ -873,7 +912,7 @@ function BookCards({ s, paper }: { s: QuoterStatus; paper: boolean }) {
 }
 
 // The quoter screen's panes on a phone.
-const QUOTER_PANES = ["overview", "books", "balances", "trades", "all-params", "cards", "ladder", "params", "events"] as const;
+const QUOTER_PANES = ["overview", "books", "balances", "trades", "open-pnl", "all-params", "cards", "ladder", "params", "events"] as const;
 type QuoterPane = (typeof QUOTER_PANES)[number];
 type BookPart = "cards" | "ladder" | "params" | "events";
 
@@ -1790,7 +1829,7 @@ function OpenButton({
   );
 }
 
-// Results across every book; opens every book's edge and every trade.
+// Results across every book; opens the open PnL, book by book.
 function AllBooksBar({ d, open, onToggle, onUnits }: { d: QuoterDeskStatus; open: boolean; onToggle: (open: boolean) => void; onUnits: (u: Units) => void }) {
   const units = useUnits();
   if (!d.books.length) return null;
@@ -1804,9 +1843,9 @@ function AllBooksBar({ d, open, onToggle, onUnits }: { d: QuoterDeskStatus; open
           <OpenButton
             open={open}
             onToggle={onToggle}
-            icon={<SlidersHorizontal size={12} />}
-            label="Parameters"
-            title={open ? "Close the all-books parameter editor" : "Edit parameters across every book"}
+            icon={<Scale size={12} />}
+            label="Open PnL"
+            title={open ? "Close the open PnL breakdown" : "What counts toward the open PnL, book by book, and what doesn't"}
           />
         </>
       }
@@ -1852,7 +1891,7 @@ function AllBooksBar({ d, open, onToggle, onUnits }: { d: QuoterDeskStatus; open
   );
 }
 
-// What every book has been doing; opens the all-books parameter editor.
+// What every book has been doing; opens every trade this run.
 function ActivityBar({ d, open, onToggle }: { d: QuoterDeskStatus; open: boolean; onToggle: (open: boolean) => void }) {
   const reset = useResetQuoterRejects();
   if (!d.books.length) return null;

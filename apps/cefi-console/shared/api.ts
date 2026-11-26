@@ -492,6 +492,10 @@ export interface QuoterBookSummary {
   reason?: string;
   reference: string | null;
   position: string;
+  // What the open PnL is made of: (reference − avgCost) × position, counting the book's own fills
+  // since positionSince. Older quoters don't send these.
+  avgCost?: string;
+  positionSince?: string;
   realizedPnl: string;
   unrealizedPnl: string;
   orders: number;
