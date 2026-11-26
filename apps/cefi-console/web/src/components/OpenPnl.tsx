@@ -1,7 +1,10 @@
+import { createColumnHelper, type ColumnDef, type ColumnFiltersState } from "@tanstack/react-table";
 import { Info } from "lucide-react";
+import { useMemo, useState } from "react";
 import type { QuoterDeskStatus } from "../../../shared/api.ts";
 import { price as fmtPrice, qty as fmtQty, quoteUnit } from "../format.ts";
 import { openPnl, type OpenPnlRow, type OpenPnlTotal } from "../open-pnl.ts";
+import { DataTable, type ColMeta } from "../table/DataTable.tsx";
 import { usePhone } from "./Phone.tsx";
 import { cx, Empty, Panel, SymbolLink } from "./ui.tsx";
 
@@ -18,28 +21,42 @@ const STARTING_TITLE =
 export function OpenPnlView({ d, onOpen }: { d: QuoterDeskStatus; onOpen: (symbol: string) => void }) {
   const phone = usePhone();
   const r = openPnl(d);
+  const rule = (
+    <p className="flex shrink-0 items-start gap-1.5 border-b border-line px-3 py-2 text-[11px] leading-relaxed text-muted">
+      <Info size={12} className="mt-0.5 shrink-0" />
+      {RULE}
+    </p>
+  );
+  const note = (
+    <p className="shrink-0 px-3 py-2 text-[11px] leading-relaxed text-faint">
+      Reset on a book&apos;s Position card makes what it holds now its starting position: position, average cost and PnL go to zero.
+    </p>
+  );
   return (
     <Panel title="Open PnL" className="h-full" actions={<Totals totals={r.totals} />}>
-      <div className="h-full overflow-y-auto">
-        <p className="flex items-start gap-1.5 border-b border-line px-3 py-2 text-[11px] leading-relaxed text-muted">
-          <Info size={12} className="mt-0.5 shrink-0" />
-          {RULE}
-        </p>
-        {r.rows.length === 0 ? (
-          <Empty>No books yet.</Empty>
-        ) : phone ? (
-          <div className="flex flex-col gap-2 p-2">
-            {r.rows.map((row) => (
-              <BookCard key={row.symbol} r={row} onOpen={onOpen} />
-            ))}
+      {phone ? (
+        <div className="h-full overflow-y-auto">
+          {rule}
+          {r.rows.length === 0 ? (
+            <Empty>No books yet.</Empty>
+          ) : (
+            <div className="flex flex-col gap-2 p-2">
+              {r.rows.map((row) => (
+                <BookCard key={row.symbol} r={row} onOpen={onOpen} />
+              ))}
+            </div>
+          )}
+          {note}
+        </div>
+      ) : (
+        <div className="flex h-full min-h-0 flex-col">
+          {rule}
+          <div className="min-h-0 flex-1">
+            <BookTable rows={r.rows} onOpen={onOpen} />
           </div>
-        ) : (
-          <BookTable rows={r.rows} onOpen={onOpen} />
-        )}
-        <p className="px-3 py-2 text-[11px] leading-relaxed text-faint">
-          Reset on a book&apos;s Position card makes what it holds now its starting position: position, average cost and PnL go to zero.
-        </p>
-      </div>
+          {note}
+        </div>
+      )}
     </Panel>
   );
 }
@@ -61,94 +78,147 @@ const EXIT_TITLE =
   "What closing the position now would come to against the exchange's book: selling a long into the bids, buying a short back from the asks, " +
   "level by level and around this book's own orders. The PnL is against the average cost, before fees.";
 
+const col = createColumnHelper<OpenPnlRow>();
+
+// A number column: right-aligned, sorted with blanks last, filtered by range.
+const num = (label: string, title: string, unit?: "$") => ({
+  sortUndefined: "last" as const,
+  meta: { label, align: "right", title, filter: { kind: "range", unit } } satisfies ColMeta,
+});
+
+// The same table as the rest of the console: sort by any column, filter, and drag, resize or hide
+// columns from the menu; the layout is remembered.
 function BookTable({ rows, onOpen }: { rows: OpenPnlRow[]; onOpen: (symbol: string) => void }) {
-  const th = "px-3 py-1.5 font-medium";
-  const r = cx(th, "text-right");
-  const td = "px-3 py-1.5 text-right";
+  const [filters, setFilters] = useState<ColumnFiltersState>([]);
+  const columns = useMemo(
+    () =>
+      [
+        col.accessor("symbol", {
+          id: "book",
+          header: "Book",
+          size: 150,
+          meta: { label: "Book", filter: { kind: "multi" } } satisfies ColMeta,
+          cell: (c) => (
+            <span className="flex items-center gap-2">
+              <SymbolLink onOpen={() => onOpen(c.row.original.symbol)} title="Open this book">
+                {c.getValue()}
+              </SymbolLink>
+              <StatusTag r={c.row.original} />
+            </span>
+          ),
+        }),
+        col.accessor((r) => r.starting ?? undefined, {
+          id: "starting",
+          header: "Starting",
+          size: 96,
+          ...num("Starting position", STARTING_TITLE),
+          cell: (c) => <Starting r={c.row.original} />,
+        }),
+        col.accessor("position", {
+          id: "position",
+          header: "Position",
+          size: 96,
+          ...num("Position", "The book's own fills since it started or was last reset: what open PnL counts. Hover a figure for since when."),
+          cell: (c) => (
+            <span title={`Since ${since(c.row.original.since)}`}>
+              <Signed v={c.getValue()} />
+            </span>
+          ),
+        }),
+        col.accessor((r) => r.avgCost ?? undefined, {
+          id: "avgCost",
+          header: "Avg cost",
+          size: 96,
+          ...num("Avg cost", "The average price of the position"),
+          cell: (c) => (c.getValue() === undefined ? <Dash /> : fmtPrice(c.getValue()!)),
+        }),
+        col.accessor((r) => r.mark ?? undefined, {
+          id: "mark",
+          header: "Mark",
+          size: 96,
+          ...num("Mark", "The book's reference mid, what the position is marked to"),
+          cell: (c) => (c.getValue() === undefined ? <Dash /> : fmtPrice(c.getValue()!)),
+        }),
+        col.accessor((r) => r.moveBps ?? undefined, {
+          id: "move",
+          header: "Move",
+          size: 88,
+          ...num("Move", "How far the mark is from the average cost, in bps of the cost"),
+          cell: (c) => <Bps v={c.getValue() ?? null} />,
+        }),
+        col.accessor("open", {
+          id: "open",
+          header: "Open",
+          size: 88,
+          ...num("Open", "(mark − avg cost) × position", "$"),
+          cell: (c) => (
+            <span className="font-medium">
+              <Money v={c.getValue()} />
+            </span>
+          ),
+        }),
+        col.accessor((r) => r.exit?.pnl, {
+          id: "exit",
+          header: "If closed now",
+          size: 110,
+          ...num("If closed now", EXIT_TITLE, "$"),
+          cell: (c) => <ExitCell r={c.row.original} />,
+        }),
+        col.accessor("realized", {
+          id: "realized",
+          header: "Realized",
+          size: 88,
+          ...num("Realized", "PnL on what the book has bought and sold back since it started counting, before fees", "$"),
+          cell: (c) => <Money v={c.getValue()} />,
+        }),
+        col.accessor((r) => r.fees ?? undefined, {
+          id: "fees",
+          header: "Fees",
+          size: 80,
+          ...num("Fees", "What the exchange charged for the fills counted in the position", "$"),
+          cell: (c) => <Fees v={c.getValue() ?? null} />,
+        }),
+        col.accessor("net", {
+          id: "net",
+          header: "Net",
+          size: 88,
+          ...num("Net", "Realized plus open, less fees", "$"),
+          cell: (c) => (
+            <span className="font-medium">
+              <Money v={c.getValue()} />
+            </span>
+          ),
+        }),
+        col.accessor((r) => r.room?.used, {
+          id: "room",
+          header: "Room",
+          size: 130,
+          sortUndefined: "last",
+          meta: {
+            label: "Room",
+            align: "right",
+            title: "How much of the max position change the position uses, and the room left the way it's going",
+            filter: { kind: "range", scale: 100, unit: "%" },
+          } satisfies ColMeta,
+          cell: (c) => <Room r={c.row.original} />,
+        }),
+      ] as ColumnDef<OpenPnlRow, unknown>[],
+    [onOpen],
+  );
+  const facets = useMemo(() => ({ book: rows.map((r) => ({ value: r.symbol, count: 1 })) }), [rows]);
   return (
-    <div className="overflow-x-auto">
-      <table className="num w-full text-xs whitespace-nowrap">
-        <thead className="text-[11px] text-muted">
-          <tr className="border-b border-line">
-            <th className={cx(th, "text-left")}>Book</th>
-            <th className={r} title={STARTING_TITLE}>
-              Starting
-            </th>
-            <th className={r} title="The book's own fills since it started or was last reset: what open PnL counts. Hover a figure for since when.">
-              Position
-            </th>
-            <th className={r}>Avg cost</th>
-            <th className={r} title="The book's reference mid, what the position is marked to">
-              Mark
-            </th>
-            <th className={r} title="How far the mark is from the average cost, in bps of the cost">
-              Move
-            </th>
-            <th className={r} title="(mark − avg cost) × position">
-              Open
-            </th>
-            <th className={r} title={EXIT_TITLE}>
-              If closed now
-            </th>
-            <th className={r} title="PnL on what the book has bought and sold back since it started counting, before fees">
-              Realized
-            </th>
-            <th className={r} title="What the exchange charged for the fills counted in the position">
-              Fees
-            </th>
-            <th className={r} title="Realized plus open, less fees">
-              Net
-            </th>
-            <th className={r} title="How much of the max position change the position uses, and the room left the way it's going">
-              Room
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.symbol} className={cx("border-b border-line/60", row.status === "flat" && "text-muted")}>
-              <td className="px-3 py-1.5 text-left">
-                <span className="flex items-center gap-2">
-                  <SymbolLink onOpen={() => onOpen(row.symbol)} title="Open this book">
-                    {row.symbol}
-                  </SymbolLink>
-                  <StatusTag r={row} />
-                </span>
-              </td>
-              <td className={td}>
-                <Starting r={row} />
-              </td>
-              <td className={td} title={`Since ${since(row.since)}`}>
-                <Signed v={row.position} />
-              </td>
-              <td className={td}>{row.avgCost === null ? <Dash /> : fmtPrice(row.avgCost)}</td>
-              <td className={td}>{row.mark === null ? <Dash /> : fmtPrice(row.mark)}</td>
-              <td className={td}>
-                <Bps v={row.moveBps} />
-              </td>
-              <td className={cx(td, "font-medium")}>
-                <Money v={row.open} />
-              </td>
-              <td className={td}>
-                <ExitCell r={row} />
-              </td>
-              <td className={td}>
-                <Money v={row.realized} />
-              </td>
-              <td className={td}>
-                <Fees v={row.fees} />
-              </td>
-              <td className={cx(td, "font-medium")}>
-                <Money v={row.net} />
-              </td>
-              <td className={td}>
-                <Room r={row} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataTable<OpenPnlRow>
+      id="quoter-open-pnl"
+      data={rows}
+      columns={columns}
+      getRowId={(r) => r.symbol}
+      defaultSorting={[]}
+      filters={filters}
+      onFiltersChange={setFilters}
+      facets={facets}
+      rowClassName={(r) => r.status === "flat" && "text-muted"}
+      empty={rows.length ? "No books match these filters." : "No books yet."}
+    />
   );
 }
 
