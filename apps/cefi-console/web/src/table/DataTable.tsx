@@ -14,7 +14,7 @@ import {
   type SortingState,
   type Updater,
 } from "@tanstack/react-table";
-import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Columns3, Filter, RotateCcw, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Columns3, Filter, GripVertical, RotateCcw, X } from "lucide-react";
 import { useContext, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Button, Empty, PanelHeaderSlot, cx } from "../components/ui.tsx";
@@ -166,6 +166,8 @@ export function DataTable<T>(p: DataTableProps<T>) {
 
   const [openFilter, setOpenFilter] = useState<{ id: string; anchor: HTMLElement }>();
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement>();
+  // The column being dragged by its handle in the Columns menu.
+  const [menuDrag, setMenuDrag] = useState<string>();
   const [dragging, setDragging] = useState<string>();
   const [dropOn, setDropOn] = useState<string>();
 
@@ -381,29 +383,48 @@ export function DataTable<T>(p: DataTableProps<T>) {
       {menuAnchor && (
         <Popover anchor={menuAnchor} onClose={() => setMenuAnchor(undefined)} width={250}>
           <div className="mb-1.5 font-semibold text-ink">Columns</div>
-          <p className="mb-2 text-[10px] text-faint">Tick to show. Reorder here or by dragging a header; drag a header's edge to resize.</p>
+          <p className="mb-2 text-[10px] text-faint">Tick to show. Drag a row by its handle to reorder, or drag a header; drag a header&apos;s edge to resize.</p>
           <div className="max-h-80 space-y-0.5 overflow-y-auto">
             {layout.order.map((id, idx) => {
               const col = table.getColumn(id);
               if (!col) return null;
+              const label = metaOf(col.columnDef).label;
               return (
-                <div key={id} className="flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-raised">
-                  <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
-                    <input type="checkbox" checked={col.getIsVisible()} onChange={col.getToggleVisibilityHandler()} />
-                    <span className="truncate text-ink">{metaOf(col.columnDef).label}</span>
-                  </label>
-                  <button type="button" aria-label="Move up" className="rounded p-0.5 text-muted hover:text-ink disabled:opacity-30" disabled={idx === 0} onClick={() => move(id, idx - 1)}>
-                    <ChevronUp size={12} />
-                  </button>
+                <div
+                  key={id}
+                  data-col={id}
+                  className={cx("flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-raised", menuDrag === id && "bg-info-soft ring-1 ring-info/40")}
+                >
+                  {/* Pointer events rather than HTML drag and drop, so it works with a finger too. */}
                   <button
                     type="button"
-                    aria-label="Move down"
-                    className="rounded p-0.5 text-muted hover:text-ink disabled:opacity-30"
-                    disabled={idx === layout.order.length - 1}
-                    onClick={() => move(id, idx + 1)}
+                    aria-label={`Move ${label}: drag, or press the up and down arrows`}
+                    title="Drag to reorder"
+                    className={cx("touch-none rounded p-0.5 text-faint hover:text-ink", menuDrag === id ? "cursor-grabbing" : "cursor-grab")}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      e.currentTarget.setPointerCapture(e.pointerId);
+                      setMenuDrag(id);
+                    }}
+                    onPointerMove={(e) => {
+                      if (menuDrag !== id) return;
+                      const over = document.elementFromPoint(e.clientX, e.clientY)?.closest("[data-col]")?.getAttribute("data-col");
+                      if (over && over !== id) move(id, layout.order.indexOf(over));
+                    }}
+                    onPointerUp={() => setMenuDrag(undefined)}
+                    onPointerCancel={() => setMenuDrag(undefined)}
+                    onKeyDown={(e) => {
+                      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+                      e.preventDefault();
+                      move(id, e.key === "ArrowUp" ? idx - 1 : idx + 1);
+                    }}
                   >
-                    <ChevronDown size={12} />
+                    <GripVertical size={12} />
                   </button>
+                  <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+                    <input type="checkbox" checked={col.getIsVisible()} onChange={col.getToggleVisibilityHandler()} />
+                    <span className="truncate text-ink">{label}</span>
+                  </label>
                 </div>
               );
             })}
