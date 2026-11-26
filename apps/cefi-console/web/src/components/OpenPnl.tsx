@@ -1,7 +1,7 @@
 import { Info } from "lucide-react";
 import type { QuoterDeskStatus } from "../../../shared/api.ts";
 import { price as fmtPrice, qty as fmtQty, quoteUnit } from "../format.ts";
-import { openPnl, type OpenPnlRow } from "../open-pnl.ts";
+import { openPnl, type OpenPnlRow, type OpenPnlTotal } from "../open-pnl.ts";
 import { usePhone } from "./Phone.tsx";
 import { cx, Empty, Panel, SymbolLink } from "./ui.tsx";
 
@@ -10,7 +10,7 @@ import { cx, Empty, Panel, SymbolLink } from "./ui.tsx";
 
 const RULE =
   "Open = (reference mid − avg cost) × position, per book. Position is the book's own fills since it started or was last reset; " +
-  "the starting position is what else the account holds in the asset, and adds nothing to open.";
+  "the starting position is what else the account holds in the asset, and adds nothing to open. Net is realized plus open, less fees.";
 
 const STARTING_TITLE =
   "What the account holds in this asset beyond the books' own positions: there before they started counting, or traded by hand. It adds nothing to open.";
@@ -44,18 +44,22 @@ export function OpenPnlView({ d, onOpen }: { d: QuoterDeskStatus; onOpen: (symbo
   );
 }
 
-function Totals({ totals }: { totals: { quote: string; open: number }[] }) {
+function Totals({ totals }: { totals: OpenPnlTotal[] }) {
   return (
-    <span className="num text-xs">
-      {totals.map((t, i) => (
-        <span key={t.quote}>
-          {i > 0 && <span className="text-faint"> · </span>}
-          <Money v={t.open} /> <span className="text-faint">{quoteUnit(t.quote)}</span>
+    <span className="num flex flex-wrap items-baseline gap-x-3 text-xs">
+      {totals.map((t) => (
+        <span key={t.quote} title="Realized plus open, less fees">
+          <span className="text-faint">open</span> <Money v={t.open} /> <span className="text-faint">· net</span> <Money v={t.net} />{" "}
+          <span className="text-faint">{quoteUnit(t.quote)}</span>
         </span>
       ))}
     </span>
   );
 }
+
+const EXIT_TITLE =
+  "What closing the position now would come to against the exchange's book: selling a long into the bids, buying a short back from the asks, " +
+  "level by level and around this book's own orders. The PnL is against the average cost, before fees.";
 
 function BookTable({ rows, onOpen }: { rows: OpenPnlRow[]; onOpen: (symbol: string) => void }) {
   const th = "px-3 py-1.5 font-medium";
@@ -63,14 +67,14 @@ function BookTable({ rows, onOpen }: { rows: OpenPnlRow[]; onOpen: (symbol: stri
   const td = "px-3 py-1.5 text-right";
   return (
     <div className="overflow-x-auto">
-      <table className="num w-full text-xs">
+      <table className="num w-full text-xs whitespace-nowrap">
         <thead className="text-[11px] text-muted">
           <tr className="border-b border-line">
             <th className={cx(th, "text-left")}>Book</th>
             <th className={r} title={STARTING_TITLE}>
-              Starting position
+              Starting
             </th>
-            <th className={r} title="The book's own fills since it started or was last reset: what open PnL counts">
+            <th className={r} title="The book's own fills since it started or was last reset: what open PnL counts. Hover a figure for since when.">
               Position
             </th>
             <th className={r}>Avg cost</th>
@@ -80,9 +84,23 @@ function BookTable({ rows, onOpen }: { rows: OpenPnlRow[]; onOpen: (symbol: stri
             <th className={r} title="How far the mark is from the average cost, in bps of the cost">
               Move
             </th>
-            <th className={r}>Open PnL</th>
-            <th className={r} title="When the position started counting: the book's first start, or its last reset">
-              Since
+            <th className={r} title="(mark − avg cost) × position">
+              Open
+            </th>
+            <th className={r} title={EXIT_TITLE}>
+              If closed now
+            </th>
+            <th className={r} title="PnL on what the book has bought and sold back since it started counting, before fees">
+              Realized
+            </th>
+            <th className={r} title="What the exchange charged for the fills counted in the position">
+              Fees
+            </th>
+            <th className={r} title="Realized plus open, less fees">
+              Net
+            </th>
+            <th className={r} title="How much of the max position change the position uses, and the room left the way it's going">
+              Room
             </th>
           </tr>
         </thead>
@@ -100,7 +118,7 @@ function BookTable({ rows, onOpen }: { rows: OpenPnlRow[]; onOpen: (symbol: stri
               <td className={td}>
                 <Starting r={row} />
               </td>
-              <td className={td}>
+              <td className={td} title={`Since ${since(row.since)}`}>
                 <Signed v={row.position} />
               </td>
               <td className={td}>{row.avgCost === null ? <Dash /> : fmtPrice(row.avgCost)}</td>
@@ -111,7 +129,21 @@ function BookTable({ rows, onOpen }: { rows: OpenPnlRow[]; onOpen: (symbol: stri
               <td className={cx(td, "font-medium")}>
                 <Money v={row.open} />
               </td>
-              <td className={cx(td, "text-muted")}>{since(row.since)}</td>
+              <td className={td}>
+                <ExitCell r={row} />
+              </td>
+              <td className={td}>
+                <Money v={row.realized} />
+              </td>
+              <td className={td}>
+                <Fees v={row.fees} />
+              </td>
+              <td className={cx(td, "font-medium")}>
+                <Money v={row.net} />
+              </td>
+              <td className={td}>
+                <Room r={row} />
+              </td>
             </tr>
           ))}
         </tbody>
@@ -130,8 +162,9 @@ function BookCard({ r, onOpen }: { r: OpenPnlRow; onOpen: (symbol: string) => vo
           </SymbolLink>
           <StatusTag r={r} />
         </span>
-        <span className="text-sm font-medium">
-          <Money v={r.open} />
+        <span className="text-sm font-medium" title="Realized plus open, less fees">
+          <span className="text-[10px] font-normal text-faint">net </span>
+          <Money v={r.net} />
         </span>
       </div>
       <div className="flex justify-between text-muted">
@@ -143,15 +176,77 @@ function BookCard({ r, onOpen }: { r: OpenPnlRow; onOpen: (symbol: string) => vo
         </span>
       </div>
       {r.status !== "flat" && (
-        <div className="flex justify-between text-faint">
-          <span>avg {r.avgCost === null ? "—" : fmtPrice(r.avgCost)}</span>
-          <span>
-            mark {r.mark === null ? "—" : fmtPrice(r.mark)} · <Bps v={r.moveBps} />
-          </span>
-        </div>
+        <>
+          <div className="flex justify-between text-faint">
+            <span>avg {r.avgCost === null ? "—" : fmtPrice(r.avgCost)}</span>
+            <span>
+              mark {r.mark === null ? "—" : fmtPrice(r.mark)} · <Bps v={r.moveBps} />
+            </span>
+          </div>
+          <div className="flex justify-between text-muted">
+            <span>
+              open <Money v={r.open} />
+            </span>
+            <span title={EXIT_TITLE}>
+              if closed <ExitCell r={r} />
+            </span>
+          </div>
+        </>
       )}
+      <div className="flex justify-between text-muted">
+        <span>
+          realized <Money v={r.realized} />
+        </span>
+        <span>
+          fees <Fees v={r.fees} />
+        </span>
+      </div>
+      <div className="text-faint">
+        room <Room r={r} />
+      </div>
       <div className="text-faint">since {since(r.since)}</div>
     </div>
+  );
+}
+
+// The exit's PnL, with its average price and how far down the book it would go.
+function ExitCell({ r }: { r: OpenPnlRow }) {
+  const x = r.exit;
+  if (!x) return <Dash />;
+  const parts = [
+    `average ${fmtPrice(x.price)} over ${x.levels} level${x.levels === 1 ? "" : "s"}`,
+    `${fmtMoney(x.value)} ${r.position > 0 ? "in" : "out"}`,
+    x.partialQty !== null && `only ${fmtQty(x.partialQty, 6)} of the ${fmtQty(Math.abs(r.position), 6)}: the book is too thin for the rest`,
+    x.topOnly && "priced off the best bid or ask alone: the full book isn't in yet",
+  ].filter(Boolean);
+  return (
+    <span title={parts.join("; ")}>
+      <Money v={x.pnl} />
+      {(x.partialQty !== null || x.topOnly) && <span className="text-accent">*</span>}
+    </span>
+  );
+}
+
+function Fees({ v }: { v: number | null }) {
+  if (v === null) return <Dash />;
+  return <span className={v > 0 ? "text-sell" : ""}>{v > 0 ? "−" + fmtMoney(v) : fmtMoney(v)}</span>;
+}
+
+// Share of the max position change used, then what's left the way the position is going.
+function Room({ r }: { r: OpenPnlRow }) {
+  const x = r.room;
+  if (!x)
+    return (
+      <span className="text-faint" title="No max position change set">
+        —
+      </span>
+    );
+  const pct = Math.round(x.used * 100);
+  return (
+    <span title={`${fmtQty(x.left, 6)} ${r.base} more it may ${r.position >= 0 ? "buy" : "sell"} under the max position change`}>
+      <span className={pct >= 90 ? "text-sell" : pct >= 70 ? "text-accent" : ""}>{pct}%</span>
+      <span className="text-faint"> · {x.leftUsd === null ? fmtQty(x.left, 6) : fmtMoney(x.leftUsd)} left</span>
+    </span>
   );
 }
 

@@ -24,13 +24,38 @@ export interface OpenPnlRow {
   // counted: a position marked to a price. flat: nothing to mark; what it made is realized.
   // no-reference: a position, but no price to mark it to, so it counts as 0.
   status: "counted" | "flat" | "no-reference";
+  realized: number; // before fees
+  // What the exchange charged for the fills counted in the position; null from an older quoter.
+  fees: number | null;
+  // Realized plus open, less fees.
+  net: number;
+  // What closing the position now would fetch against the exchange's book; null when flat or with
+  // nothing to price it against.
+  exit: {
+    price: number;
+    value: number;
+    pnl: number;
+    // Only part of the position: the book is too thin to close all of it.
+    partialQty: number | null;
+    levels: number;
+    topOnly: boolean;
+  } | null;
+  // How much of the max position change the position uses, and the room left the way it's going.
+  room: { used: number; left: number; leftUsd: number | null } | null;
+}
+
+export interface OpenPnlTotal {
+  quote: string;
+  open: number;
   realized: number;
+  fees: number | null;
+  net: number;
 }
 
 export interface OpenPnl {
   rows: OpenPnlRow[];
-  // The open PnL per quote currency, as the quoter adds it up.
-  totals: { quote: string; open: number }[];
+  // Per quote currency, as the quoter adds it up.
+  totals: OpenPnlTotal[];
 }
 
 // Smaller than this is rounding, not a holding.
@@ -54,6 +79,18 @@ export function openPnl(d: QuoterDeskStatus): OpenPnl {
     const bal = d.balances.find((x) => x.assetId === b.market.baseAssetId);
     let starting = bal ? Number(bal.spendable) - asset.held : null;
     if (starting !== null && Math.abs(starting) < DUST) starting = 0;
+    const open = Number(b.unrealizedPnl);
+    const realized = Number(b.realizedPnl);
+    const fees = b.fees === undefined ? null : Number(b.fees);
+    const x = b.exit;
+    const exitQty = x ? Number(x.qty) : 0;
+    let room: OpenPnlRow["room"] = null;
+    if (b.limit) {
+      const max = Number(b.limit.max);
+      // Long uses up the room to buy more; short, the room to sell.
+      const left = Number(position >= 0 ? b.limit.buyRoom : b.limit.sellRoom);
+      room = { used: max > 0 ? Math.abs(position) / max : 0, left, leftUsd: mark === null ? null : left * mark };
+    }
     return {
       symbol: b.market.symbol,
       base: b.market.baseSymbol,
@@ -64,13 +101,33 @@ export function openPnl(d: QuoterDeskStatus): OpenPnl {
       avgCost,
       mark,
       moveBps: avgCost && mark !== null ? ((mark - avgCost) / avgCost) * 10_000 : null,
-      open: Number(b.unrealizedPnl),
+      open,
       since: b.positionSince ?? null,
       status: flat ? "flat" : mark === null ? "no-reference" : "counted",
-      realized: Number(b.realizedPnl),
+      realized,
+      fees,
+      net: realized + open - (fees ?? 0),
+      exit:
+        x && !flat
+          ? {
+              price: Number(x.price),
+              value: Number(x.value),
+              pnl: Number(x.pnl),
+              partialQty: exitQty < Math.abs(position) - DUST ? exitQty : null,
+              levels: x.levels,
+              topOnly: x.source === "top",
+            }
+          : null,
+      room,
     };
   });
   rows.sort((a, b) => order[a.status] - order[b.status] || Math.abs(b.open) - Math.abs(a.open) || a.symbol.localeCompare(b.symbol));
 
-  return { rows, totals: d.totals.map((t) => ({ quote: t.quote, open: Number(t.unrealizedPnl) })) };
+  const totals = d.totals.map((t): OpenPnlTotal => {
+    const open = Number(t.unrealizedPnl);
+    const realized = Number(t.realizedPnl);
+    const fees = t.fees === undefined ? null : Number(t.fees);
+    return { quote: t.quote, open, realized, fees, net: realized + open - (fees ?? 0) };
+  });
+  return { rows, totals };
 }

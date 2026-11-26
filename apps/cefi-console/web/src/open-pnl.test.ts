@@ -14,7 +14,7 @@ const book = (base: string, position: string, extra: Record<string, unknown> = {
 });
 
 const desk = (books: ReturnType<typeof book>[], balances: { assetId: string; symbol: string; spendable: string; price: string | null }[] = []) =>
-  ({ books, balances, totals: [{ quote: "USDC", unrealizedPnl: "-0.35" }] }) as unknown as QuoterDeskStatus;
+  ({ books, balances, totals: [{ quote: "USDC", unrealizedPnl: "-0.35", realizedPnl: "1.2", fees: "0.1" }] }) as unknown as QuoterDeskStatus;
 
 describe("openPnl", () => {
   it("marks each book's own position to its reference, biggest first", () => {
@@ -24,7 +24,7 @@ describe("openPnl", () => {
     expect(r.rows.map((x) => x.symbol)).toEqual(["AMZNC-USDC", "TSLA-USDC"]);
     expect(r.rows[0]!.open).toBe(-0.351);
     expect(r.rows[0]!.moveBps).toBeCloseTo(-39.86, 1);
-    expect(r.totals).toEqual([{ quote: "USDC", open: -0.35 }]);
+    expect(r.totals).toEqual([{ quote: "USDC", open: -0.35, realized: 1.2, fees: 0.1, net: 1.2 - 0.35 - 0.1 }]);
   });
 
   it("gives each book the account's holding beyond the books as its starting position", () => {
@@ -64,5 +64,32 @@ describe("openPnl", () => {
     const r = openPnl(desk([book("TSLA", "1", { avgCost: undefined })]));
     expect(r.rows[0]!.starting).toBeNull();
     expect(r.rows[0]!.moveBps).toBeNull();
+  });
+
+  it("nets fees off realized plus open, and passes on the exit and the room left", () => {
+    const r = openPnl(
+      desk([
+        book("AMZNC", "0.3", {
+          realizedPnl: "2",
+          unrealizedPnl: "-0.5",
+          fees: "0.25",
+          reference: "250",
+          exit: { price: "249", qty: "0.2", value: "49.8", pnl: "-0.6", levels: 2, source: "depth" },
+          limit: { max: "0.4", buyRoom: "0.1", sellRoom: "0.7" },
+        }),
+      ]),
+    );
+    const row = r.rows[0]!;
+    expect(row.net).toBeCloseTo(1.25, 9);
+    expect(row.exit).toEqual({ price: 249, value: 49.8, pnl: -0.6, partialQty: 0.2, levels: 2, topOnly: false });
+    expect(row.room?.used).toBeCloseTo(0.75, 9);
+    expect([row.room?.left, row.room?.leftUsd]).toEqual([0.1, 25]);
+  });
+
+  it("uses the room to sell for a short, and leaves fees blank for an older quoter", () => {
+    const r = openPnl(desk([book("TSLA", "-0.1", { reference: "400", limit: { max: "0.4", buyRoom: "0.5", sellRoom: "0.3" } })]));
+    expect(r.rows[0]!.room?.left).toBe(0.3);
+    expect(r.rows[0]!.fees).toBeNull();
+    expect(r.rows[0]!.exit).toBeNull();
   });
 });

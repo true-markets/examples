@@ -367,6 +367,21 @@ function smallUsd(v: number): string {
   return "$" + a.toFixed(a >= 0.01 ? 3 : 4);
 }
 
+// A fee as what it cost: −$0.004 in red, or — while it isn't known.
+function feeUsd(v: string | number | null | undefined, title?: string) {
+  if (v === null || v === undefined) return <span className="text-faint">—</span>;
+  const n = Number(v);
+  return (
+    <span className={n > 0 ? "text-sell" : ""} title={title}>
+      {n > 0 ? "−" : ""}
+      {smallUsd(n)}
+    </span>
+  );
+}
+
+// PnL after fees: realized plus open, less what the fills cost. Older quoters send no fees.
+const netPnl = (x: { realizedPnl: string; unrealizedPnl: string; fees?: string }) => Number(x.realizedPnl) + Number(x.unrealizedPnl) - Number(x.fees ?? 0);
+
 // A signed bps or dollar figure, green in our favor, red against.
 function money(v: number | null | undefined, units: Units) {
   if (units === "bps") return bps(v);
@@ -575,7 +590,7 @@ function BooksPanel({ d, selected, onSelect }: { d: QuoterDeskStatus; selected?:
 }
 
 function BookRow({ b, active, onSelect }: { b: QuoterBookSummary; active: boolean; onSelect: () => void }) {
-  const pnl = Number(b.realizedPnl) + Number(b.unrealizedPnl);
+  const pnl = netPnl(b);
   return (
     <button type="button" onClick={onSelect} className={cx("block w-full px-3 py-2 text-left hover:bg-raised", active && "bg-raised")}>
       <div className="flex items-center gap-2">
@@ -590,7 +605,9 @@ function BookRow({ b, active, onSelect }: { b: QuoterBookSummary; active: boolea
           pos {signed(b.position, 6)} {b.market.baseSymbol}
           {b.reference && Number(b.position) !== 0 && <span className="text-faint"> · {signedUsd(Number(b.position) * Number(b.reference))}</span>}
         </span>
-        <span className="ml-auto">PnL {signedUsd(pnl)}</span>
+        <span className="ml-auto" title={b.fees === undefined ? "Realized plus open" : "Realized plus open, less fees"}>
+          PnL {signedUsd(pnl)}
+        </span>
       </div>
       <div className="num mt-1 flex items-center gap-3 text-[11px] text-muted">
         <span title={`The bids hold ${fmtQty(b.heldQuote, 2)} of ${fmtQty(b.budgetQuote, 2)} ${b.market.quoteSymbol}`}>
@@ -1170,8 +1187,8 @@ function PositionCard({ s }: { s: QuoterStatus }) {
           }
         >
           <p className="text-xs leading-relaxed text-muted">
-            The position ({p.qty} {base}), its average cost, realized PnL, volume and activity counts start again from zero, and the max position change is
-            measured from now. Nothing is traded and your balances don't change; the trade journal keeps its history.
+            The position ({p.qty} {base}), its average cost, realized PnL, fees, volume and activity counts start again from zero, and the max position change
+            is measured from now. Nothing is traded and your balances don't change; the trade journal keeps its history.
           </p>
         </Modal>
       )}
@@ -1186,6 +1203,32 @@ function PositionCard({ s }: { s: QuoterStatus }) {
       <Row label="Unrealized" title="The open position marked to the reference mid">
         {signedUsd(Number(p.unrealizedPnl))}
       </Row>
+      {p.fees !== undefined && (
+        <>
+          <Row label="Fees" title="What the exchange charged for the fills counted here. A fill's fee turns up a few seconds after it">
+            {feeUsd(p.fees)}
+          </Row>
+          <Row label="After fees" title="Realized plus unrealized, less fees">
+            {signedUsd(netPnl(p))}
+          </Row>
+        </>
+      )}
+      {p.exit && (
+        <Row
+          label="If closed now"
+          title={`Closing the position against the exchange's book, around this book's own orders: average ${fmtPrice(p.exit.price)} over ${p.exit.levels} level${p.exit.levels === 1 ? "" : "s"}${
+            Number(p.exit.qty) < Math.abs(Number(p.qty)) ? `, and only ${fmtQty(p.exit.qty)} of it: the book is too thin for the rest` : ""
+          }${p.exit.source === "top" ? "; priced off the best bid or ask alone" : ""}. Against the average cost, before fees`}
+        >
+          {signedUsd(Number(p.exit.pnl))}
+          {(Number(p.exit.qty) < Math.abs(Number(p.qty)) || p.exit.source === "top") && <span className="text-accent">*</span>}
+        </Row>
+      )}
+      {p.limit && (
+        <Row label="Room left" title="More the book may buy and sell under the max position change">
+          <span className="text-buy">+{fmtQty(p.limit.buyRoom, 6)}</span> / <span className="text-sell">−{fmtQty(p.limit.sellRoom, 6)}</span> {base}
+        </Row>
+      )}
       <Row label="Volume" title={`${fmtQty(p.volumeBase)} ${base}`}>
         {fmtUsd(Number(p.volumeQuote))}
       </Row>
@@ -1851,14 +1894,14 @@ function AllBooksBar({ d, open, onToggle, onUnits }: { d: QuoterDeskStatus; open
       }
     >
       {d.totals.map((x) => {
-        const pnl = Number(x.realizedPnl) + Number(x.unrealizedPnl);
+        const pnl = netPnl(x);
         return (
           <Fragment key={x.quote}>
-            <span className={barItem} title="Realized plus unrealized, since each book's position started counting">
+            <span className={barItem} title="Realized plus unrealized, less fees, since each book's position started counting">
               <span className={barLabel}>PnL</span>
               {signed(pnl)} {quoteUnit(x.quote)}
               <span className="text-faint">
-                ({signed(x.realizedPnl)} realized · {signed(x.unrealizedPnl)} open)
+                ({signed(x.realizedPnl)} realized · {signed(x.unrealizedPnl)} open{x.fees !== undefined && <> · {feeUsd(x.fees)} fees</>})
               </span>
             </span>
             <span className={barItem}>
@@ -2204,8 +2247,21 @@ interface TradeRow {
   fair: number | null; // null: no reference price at the fill (just after a start, or filled while down)
   // Edge and mark-outs in the unit the switch shows: bps, or dollars of this trade's notional.
   edge: number | null;
+  // The fee in the same unit, as a cost (positive); null while it isn't known yet. pending: the
+  // quoter is still waiting to read it.
+  fee: number | null;
+  feePending: boolean;
+  liquidity: string | undefined;
+  // Edge at fill less the fee; null without both.
+  net: number | null;
   markouts: (number | null)[];
   kept: number | null;
+}
+
+// Edge at fill less fees, in dollars or bps; null until both are in.
+function netEdge(b: QuoterTradeSummary, usd: boolean): number | null {
+  if (usd) return b.edgePnl === null || b.fees === undefined ? null : b.edgePnl - b.fees;
+  return b.edgeBps === null || b.feeBps === undefined || b.feeBps === null ? null : b.edgeBps - b.feeBps;
 }
 
 const tradeHelper = createColumnHelper<TradeRow>();
@@ -2335,6 +2391,36 @@ function SummaryTable({
         } satisfies ColMeta,
         cell: (c) => money(c.getValue(), units),
       }),
+      summaryHelper.accessor((b) => (usd ? (b.fees ?? null) : (b.feeBps ?? null)), {
+        id: "fees",
+        header: `Fees ${usd ? "$" : "bps"}`,
+        size: 90,
+        sortingFn: nullsLast("fees"),
+        meta: {
+          label: "Fees",
+          align: "right",
+          title: usd ? "What the exchange charged, summed" : "What the exchange charged, notional-weighted, in bps",
+          filter: { kind: "range", unit: usd ? "$" : undefined },
+        } satisfies ColMeta,
+        cell: (c) => {
+          const v = c.getValue();
+          const waiting = c.row.original.feesPending ?? 0;
+          return (
+            <span title={waiting ? `${waiting} trade${waiting === 1 ? "" : "s"} still waiting for the fee` : undefined}>
+              {v === null ? <span className="text-faint">—</span> : money(-v, units)}
+              {waiting > 0 && <span className="text-faint">…</span>}
+            </span>
+          );
+        },
+      }),
+      summaryHelper.accessor((b) => netEdge(b, usd), {
+        id: "netEdge",
+        header: `Net edge ${usd ? "$" : "bps"}`,
+        size: 100,
+        sortingFn: nullsLast("netEdge"),
+        meta: { label: "Net edge", align: "right", title: "Edge at fill less fees", filter: { kind: "range", unit: usd ? "$" : undefined } } satisfies ColMeta,
+        cell: (c) => money(c.getValue(), units),
+      }),
       ...hz.map((h, i) =>
         summaryHelper.accessor((b) => (usd ? b.markedPnl[i] : b.markouts[i]) ?? null, {
           id: `m${h}`,
@@ -2453,6 +2539,8 @@ function TradesTable({ id, trades, hz, onOpen }: { id: string; trades: QuoterTra
         const priced = !t.recovered && !t.unpriced;
         const notional = Number(t.notional);
         const shown = (v: number | null | undefined) => (v === null || v === undefined ? null : usd ? (v / 10_000) * notional : v);
+        const fee = t.fee === null || t.fee === undefined ? null : usd ? Number(t.fee) : (t.feeBps ?? null);
+        const edge = priced ? shown(t.edgeBps) : null;
         return {
           id: String(t.id),
           timeMs: Date.parse(t.time),
@@ -2464,7 +2552,12 @@ function TradesTable({ id, trades, hz, onOpen }: { id: string; trades: QuoterTra
           price: Number(t.price),
           notional,
           fair: priced ? Number(t.refMid) : null,
-          edge: priced ? shown(t.edgeBps) : null,
+          edge,
+          fee,
+          // The quoter reads fees for an hour after each fill; an older quoter never does.
+          feePending: fee === null && !!t.orderId && Date.now() - Date.parse(t.time) < 3_600_000,
+          liquidity: t.liquidity,
+          net: edge !== null && fee !== null ? edge - fee : null,
           markouts: t.markouts.map(shown),
           // Not over an edge under 1 bps: -8 over +0.2 reads as -4000%, which says nothing.
           kept: priced && last !== null && last !== undefined && t.edgeBps >= 1 ? last / t.edgeBps : null,
@@ -2557,6 +2650,39 @@ function TradesTable({ id, trades, hz, onOpen }: { id: string; trades: QuoterTra
           title: `${usd ? "Dollars" : "bps"} from fair value in our favor, at the fill. — when there was no reference price then, and the trade is left out of the averages`,
           filter: { kind: "range", unit: usd ? "$" : undefined },
         } satisfies ColMeta,
+        cell: (c) => money(c.getValue(), units),
+      }),
+      tradeHelper.accessor("fee", {
+        id: "fee",
+        header: `Fee ${usd ? "$" : "bps"}`,
+        size: 80,
+        sortingFn: nullsLast("fee"),
+        meta: {
+          label: "Fee",
+          align: "right",
+          title:
+            "What the exchange charged, and whether the fill was maker or taker. It turns up a few seconds after the fill, once the quoter reads the account's fills",
+          filter: { kind: "range", unit: usd ? "$" : undefined },
+        } satisfies ColMeta,
+        cell: (c) => {
+          const t = c.row.original;
+          if (t.fee === null)
+            return t.feePending ? (
+              <span className="text-faint" title="Waiting for the exchange's fee">
+                …
+              </span>
+            ) : (
+              <span className="text-faint">—</span>
+            );
+          return <span title={t.liquidity?.toLowerCase()}>{money(-t.fee, units)}</span>;
+        },
+      }),
+      tradeHelper.accessor("net", {
+        id: "net",
+        header: `Net ${usd ? "$" : "bps"}`,
+        size: 80,
+        sortingFn: nullsLast("net"),
+        meta: { label: "Net", align: "right", title: "Edge at fill less the fee", filter: { kind: "range", unit: usd ? "$" : undefined } } satisfies ColMeta,
         cell: (c) => money(c.getValue(), units),
       }),
       ...hz.map((h, i) =>
