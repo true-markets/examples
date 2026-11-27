@@ -83,12 +83,14 @@ describe("openPnl", () => {
     expect(row.net).toBeCloseTo(1.25, 9);
     expect(row.exit).toEqual({ price: 249, value: 49.8, pnl: -0.6, partialQty: 0.2, levels: 2, topOnly: false });
     expect(row.room?.used).toBeCloseTo(0.75, 9);
+    expect(row.room?.lean).toBeCloseTo(0.75, 9);
     expect([row.room?.left, row.room?.leftUsd]).toEqual([0.1, 25]);
   });
 
   it("uses the room to sell for a short, and leaves fees blank for an older quoter", () => {
     const r = openPnl(desk([book("TSLA", "-0.1", { reference: "400", limit: { max: "0.4", buyRoom: "0.5", sellRoom: "0.3" } })]));
     expect(r.rows[0]!.room?.left).toBe(0.3);
+    expect(r.rows[0]!.room?.lean).toBeCloseTo(-0.25, 9); // a quarter of the way to the limit short
     expect(r.rows[0]!.fees).toBeNull();
     expect(r.rows[0]!.exit).toBeNull();
   });

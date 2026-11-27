@@ -7,6 +7,7 @@ import { openPnl, type OpenPnlRow, type OpenPnlTotal } from "../open-pnl.ts";
 import { DataTable, type ColMeta } from "../table/DataTable.tsx";
 import { Help } from "./help.tsx";
 import { usePhone } from "./Phone.tsx";
+import { RoomBar } from "./RoomBar.tsx";
 import { cx, Empty, Panel, SymbolLink } from "./ui.tsx";
 
 // The open PnL, book by book: what each book started with, its own position since then, and that
@@ -195,15 +196,16 @@ function BookTable({ rows, onOpen }: { rows: OpenPnlRow[]; onOpen: (symbol: stri
             </span>
           ),
         }),
-        col.accessor((r) => r.room?.used, {
+        col.accessor((r) => r.room?.lean, {
           id: "room",
           header: "Room",
-          size: 130,
+          size: 180,
           sortUndefined: "last",
           meta: {
             label: "Room",
-            align: "right",
-            title: "How much of the max position change the position uses, and the room left the way it's going",
+            title:
+              "Where the position sits under the max position change: green to the right while long, red to the left while short, out to the limit each way. " +
+              "Sorts from the most short to the most long; filter by −100% (the limit short) to +100% (long)",
             filter: { kind: "range", scale: 100, unit: "%" },
           } satisfies ColMeta,
           cell: (c) => <Room r={c.row.original} />,
@@ -277,9 +279,7 @@ function BookCard({ r, onOpen }: { r: OpenPnlRow; onOpen: (symbol: string) => vo
           fees <Fees v={r.fees} />
         </span>
       </div>
-      <div className="text-faint">
-        room <Room r={r} />
-      </div>
+      <Room r={r} left />
       <div className="text-faint">since {since(r.since)}</div>
     </div>
   );
@@ -308,8 +308,9 @@ function Fees({ v }: { v: number | null }) {
   return <span className={v > 0 ? "text-sell" : ""}>{v > 0 ? "−" + fmtMoney(v) : fmtMoney(v)}</span>;
 }
 
-// Share of the max position change used, then what's left the way the position is going.
-function Room({ r }: { r: OpenPnlRow }) {
+// Where the position leans under the max position change, as a two-sided bar, with the room left
+// the way it's going.
+function Room({ r, left }: { r: OpenPnlRow; left?: boolean }) {
   const x = r.room;
   if (!x)
     return (
@@ -317,11 +318,10 @@ function Room({ r }: { r: OpenPnlRow }) {
         —
       </span>
     );
-  const pct = Math.round(x.used * 100);
   return (
-    <span title={`${fmtQty(x.left, 6)} ${r.base} more it may ${r.position >= 0 ? "buy" : "sell"} under the max position change`}>
-      <span className={pct >= 90 ? "text-sell" : pct >= 70 ? "text-accent" : ""}>{pct}%</span>
-      <span className="text-faint"> · {x.leftUsd === null ? fmtQty(x.left, 6) : fmtMoney(x.leftUsd)} left</span>
+    <span className="flex items-center gap-2">
+      <RoomBar lean={x.lean} max={x.max} buyRoom={x.buyRoom} sellRoom={x.sellRoom} base={r.base} />
+      {left && x.lean !== 0 && <span className="shrink-0 text-[11px] text-faint">{x.leftUsd === null ? fmtQty(x.left, 6) : fmtMoney(x.leftUsd)} left</span>}
     </span>
   );
 }

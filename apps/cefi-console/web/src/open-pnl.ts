@@ -40,8 +40,9 @@ export interface OpenPnlRow {
     levels: number;
     topOnly: boolean;
   } | null;
-  // How much of the max position change the position uses, and the room left the way it's going.
-  room: { used: number; left: number; leftUsd: number | null } | null;
+  // Where the position sits under the max position change: lean is position over max (−1 the limit
+  // short, +1 long), used its size, left the room the way it's going.
+  room: { lean: number; used: number; left: number; leftUsd: number | null; max: number; buyRoom: number; sellRoom: number } | null;
 }
 
 export interface OpenPnlTotal {
@@ -89,7 +90,16 @@ export function openPnl(d: QuoterDeskStatus): OpenPnl {
       const max = Number(b.limit.max);
       // Long uses up the room to buy more; short, the room to sell.
       const left = Number(position >= 0 ? b.limit.buyRoom : b.limit.sellRoom);
-      room = { used: max > 0 ? Math.abs(position) / max : 0, left, leftUsd: mark === null ? null : left * mark };
+      const lean = max > 0 ? position / max : 0;
+      room = {
+        lean,
+        used: Math.abs(lean),
+        left,
+        leftUsd: mark === null ? null : left * mark,
+        max,
+        buyRoom: Number(b.limit.buyRoom),
+        sellRoom: Number(b.limit.sellRoom),
+      };
     }
     return {
       symbol: b.market.symbol,

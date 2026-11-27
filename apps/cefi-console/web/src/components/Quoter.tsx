@@ -24,6 +24,7 @@ import { Panel as Pane } from "react-resizable-panels";
 import { Divider, pane, Split } from "./Layout.tsx";
 import { Help, ShowHelp } from "./help.tsx";
 import { OpenPnlView } from "./OpenPnl.tsx";
+import { RoomBar } from "./RoomBar.tsx";
 import { DrawerSetting, PhoneScreen, usePhone, usePhonePane } from "./Phone.tsx";
 import type {
   QuoterBookSummary,
@@ -1027,10 +1028,11 @@ function Card({ title, children, action, plain }: { title: ReactNode; children: 
         ) : (
           title
         )}
-        {action && <span className="ml-auto normal-case tracking-normal">{action}</span>}
+        {/* Pulled into the header's line, so a button doesn't make this card's header taller than its neighbours'. */}
+        {action && <span className="-my-1.5 ml-auto normal-case tracking-normal">{action}</span>}
       </h2>
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-2">
-        {plain ? <div className="text-xs">{children}</div> : <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">{children}</dl>}
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-1.5">
+        {plain ? <div className="text-xs">{children}</div> : <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-[3px] text-xs">{children}</dl>}
       </div>
     </section>
   );
@@ -1152,14 +1154,23 @@ function PositionCard({ s }: { s: QuoterStatus }) {
   const quote = quoteUnit(s.market.quoteSymbol);
   const reset = useResetQuoterPosition();
   const [confirm, setConfirm] = useState(false);
-  const since = new Date(p.since);
+  const sinceText = new Date(p.since).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const sinceDay = new Date(p.since).toLocaleDateString([], { month: "short", day: "numeric" });
   return (
     <Card
       title="Position"
       action={
-        <Button size="xs" tone="ghost" onClick={() => setConfirm(true)} title="Start this book's position, PnL, volume and counts from zero">
-          <RotateCcw size={12} /> Reset
-        </Button>
+        <span className="flex items-center gap-1">
+          <span
+            className="num text-[11px] whitespace-nowrap text-faint"
+            title={`When this book's position started counting (${sinceText}): its first start, or the last reset. Carried across quoter restarts`}
+          >
+            since {sinceDay}
+          </span>
+          <Button size="xs" tone="ghost" onClick={() => setConfirm(true)} title="Start this book's position, PnL, volume and counts from zero">
+            <RotateCcw size={12} /> Reset
+          </Button>
+        </span>
       }
     >
       {confirm && (
@@ -1187,26 +1198,29 @@ function PositionCard({ s }: { s: QuoterStatus }) {
           </p>
         </Modal>
       )}
-      <Row label="Since" title="When this book's position started counting: its first start, or the last reset. Carried across quoter restarts">
-        {since.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-      </Row>
-      <Row label="Change" title="Bought minus sold since then">
+      {/* Six rows at most, like the cards beside it, so it fits their height without scrolling. */}
+      <Row label="Change" title={`Bought minus sold since ${sinceText}, at its average cost`}>
         {signed(p.qty, 6)} {base}
+        {Number(p.qty) !== 0 && <span className="text-faint"> @ {fmtPrice(p.avgCost)}</span>}
       </Row>
-      <Row label="Avg cost">{Number(p.qty) === 0 ? "—" : fmtPrice(p.avgCost)}</Row>
-      <Row label="Realized PnL">{signedUsd(Number(p.realizedPnl))}</Row>
-      <Row label="Unrealized" title="The open position marked to the reference mid">
-        {signedUsd(Number(p.unrealizedPnl))}
+      <Row
+        label="PnL"
+        title={`Realized / open${p.fees === undefined ? "" : " / fees"}. Realized: on what's been bought and sold back. Open: the rest marked to the reference mid.${
+          p.fees === undefined ? "" : " Fees: what the exchange charged, turning up a few seconds after each fill."
+        }`}
+      >
+        {signedUsd(Number(p.realizedPnl))} <span className="text-faint">/</span> {signedUsd(Number(p.unrealizedPnl))}
+        {p.fees !== undefined && (
+          <>
+            {" "}
+            <span className="text-faint">/</span> {feeUsd(p.fees)}
+          </>
+        )}
       </Row>
       {p.fees !== undefined && (
-        <>
-          <Row label="Fees" title="What the exchange charged for the fills counted here. A fill's fee turns up a few seconds after it">
-            {feeUsd(p.fees)}
-          </Row>
-          <Row label="After fees" title="Realized plus unrealized, less fees">
-            {signedUsd(netPnl(p))}
-          </Row>
-        </>
+        <Row label="After fees" title="Realized plus open, less fees">
+          {signedUsd(netPnl(p))}
+        </Row>
       )}
       {p.exit && (
         <Row
@@ -1219,9 +1233,15 @@ function PositionCard({ s }: { s: QuoterStatus }) {
           {(Number(p.exit.qty) < Math.abs(Number(p.qty)) || p.exit.source === "top") && <span className="text-accent">*</span>}
         </Row>
       )}
-      {p.limit && (
-        <Row label="Room left" title="More the book may buy and sell under the max position change">
-          <span className="text-buy">+{fmtQty(p.limit.buyRoom, 6)}</span> / <span className="text-sell">−{fmtQty(p.limit.sellRoom, 6)}</span> {base}
+      {p.limit && Number(p.limit.max) > 0 && (
+        <Row label="Room" title="Where the position sits under the max position change">
+          <RoomBar
+            lean={Number(p.qty) / Number(p.limit.max)}
+            max={Number(p.limit.max)}
+            buyRoom={Number(p.limit.buyRoom)}
+            sellRoom={Number(p.limit.sellRoom)}
+            base={base}
+          />
         </Row>
       )}
       <Row label="Volume" title={`${fmtQty(p.volumeBase)} ${base}`}>
