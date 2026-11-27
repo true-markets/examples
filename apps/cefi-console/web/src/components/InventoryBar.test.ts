@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { leanText } from "./RoomBar.tsx";
+import { leanText } from "./InventoryBar.tsx";
 
 describe("leanText", () => {
   it("says which way and how far, capped at the limit", () => {

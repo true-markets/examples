@@ -1,17 +1,17 @@
 import { qty as fmtQty } from "../format.ts";
 import { cx } from "./ui.tsx";
 
-// Where a book's position sits under its max position change, as a bar with zero in the middle:
+// A book's inventory against its max position change, as a bar with zero in the middle:
 // green to the right while long, red to the left while short, out to the limit at each end. The
 // last stretch each way is shaded, since that side's quotes thin out as the position nears it.
 
 // The last fraction of the limit each way that's shaded.
 const NEAR = 0.15;
 
-export interface RoomBarProps {
+export interface InventoryBarProps {
   // The position over the max position change: −1 is the limit short, +1 the limit long.
   lean: number;
-  // For the tooltip: the limit and the room left each way, in base.
+  // For the tooltip: the limit, and how much more the book may buy and sell under it, in base.
   max?: number;
   buyRoom?: number;
   sellRoom?: number;
@@ -26,20 +26,20 @@ export function leanText(lean: number): string {
   return pct === 0 ? "flat" : `${pct}% ${lean > 0 ? "long" : "short"}`;
 }
 
-export function RoomBar({ lean, max, buyRoom, sellRoom, base, label = "beside", className }: RoomBarProps) {
+export function InventoryBar({ lean, max, buyRoom, sellRoom, base, label = "beside", className }: InventoryBarProps) {
   const l = Math.max(-1, Math.min(1, lean));
   const near = Math.abs(l) >= 1 - NEAR;
   const title =
     max === undefined
       ? leanText(lean)
-      : `${leanText(lean)} of the max position change (${fmtQty(max, 6)} ${base ?? ""} each way). ` +
-        `Room left: buy ${fmtQty(buyRoom ?? 0, 6)}, sell ${fmtQty(sellRoom ?? 0, 6)}${base ? ` ${base}` : ""}.`;
+      : `Inventory ${leanText(lean)} of the max position change (${fmtQty(max, 6)} ${base ?? ""} each way). ` +
+        `It may still buy ${fmtQty(buyRoom ?? 0, 6)} and sell ${fmtQty(sellRoom ?? 0, 6)}${base ? ` ${base}` : ""}.`;
   return (
     <span className={cx("inline-flex w-full items-center gap-2", className)} title={title}>
       <span
         className="relative h-2 min-w-16 flex-1 overflow-hidden rounded-full bg-raised"
         role="meter"
-        aria-label="Position against the max position change"
+        aria-label="Inventory against the max position change"
         aria-valuemin={-100}
         aria-valuemax={100}
         aria-valuenow={Math.round(l * 100)}

@@ -29,20 +29,24 @@ export interface OpenPnlRow {
   fees: number | null;
   // Realized plus open, less fees.
   net: number;
-  // What closing the position now would fetch against the exchange's book; null when flat or with
-  // nothing to price it against.
+  // Exit PnL: what closing the position now would come to against the exchange's book; null when
+  // flat or with nothing to price it against.
   exit: {
     price: number;
     value: number;
     pnl: number;
+    // Unwind cost: how much worse the exit is than the mid mark on the same quantity, in dollars and
+    // bps of the mid (negative is worse). null without a mark.
+    unwindUsd: number | null;
+    unwindBps: number | null;
     // Only part of the position: the book is too thin to close all of it.
     partialQty: number | null;
     levels: number;
     topOnly: boolean;
   } | null;
-  // Where the position sits under the max position change: lean is position over max (−1 the limit
-  // short, +1 long), used its size, left the room the way it's going.
-  room: { lean: number; used: number; left: number; leftUsd: number | null; max: number; buyRoom: number; sellRoom: number } | null;
+  // The inventory against the max position change: lean is position over max (−1 the limit short,
+  // +1 long), used its size, left how much further it may go the way it's going.
+  inventory: { lean: number; used: number; left: number; leftUsd: number | null; max: number; buyRoom: number; sellRoom: number } | null;
 }
 
 export interface OpenPnlTotal {
@@ -57,6 +61,14 @@ export interface OpenPnl {
   rows: OpenPnlRow[];
   // Per quote currency, as the quoter adds it up.
   totals: OpenPnlTotal[];
+}
+
+// Unwind cost: closing qty of a position at exitPrice against marking it at the mid, in dollars and
+// in bps of the mid; negative when the exit is worse, as it is when it crosses the spread.
+export function unwind(position: number, mark: number | null, exitPrice: number, qty: number): { unwindUsd: number | null; unwindBps: number | null } {
+  if (mark === null || !(mark > 0) || position === 0) return { unwindUsd: null, unwindBps: null };
+  const dir = position > 0 ? 1 : -1; // a long sells, so a lower price is worse; a short buys
+  return { unwindUsd: (exitPrice - mark) * qty * dir, unwindBps: ((exitPrice - mark) / mark) * 10_000 * dir };
 }
 
 // Smaller than this is rounding, not a holding.
@@ -85,13 +97,13 @@ export function openPnl(d: QuoterDeskStatus): OpenPnl {
     const fees = b.fees === undefined ? null : Number(b.fees);
     const x = b.exit;
     const exitQty = x ? Number(x.qty) : 0;
-    let room: OpenPnlRow["room"] = null;
+    let inventory: OpenPnlRow["inventory"] = null;
     if (b.limit) {
       const max = Number(b.limit.max);
-      // Long uses up the room to buy more; short, the room to sell.
+      // Long uses up what it may still buy; short, what it may still sell.
       const left = Number(position >= 0 ? b.limit.buyRoom : b.limit.sellRoom);
       const lean = max > 0 ? position / max : 0;
-      room = {
+      inventory = {
         lean,
         used: Math.abs(lean),
         left,
@@ -123,12 +135,13 @@ export function openPnl(d: QuoterDeskStatus): OpenPnl {
               price: Number(x.price),
               value: Number(x.value),
               pnl: Number(x.pnl),
+              ...unwind(position, mark, Number(x.price), Number(x.qty)),
               partialQty: exitQty < Math.abs(position) - DUST ? exitQty : null,
               levels: x.levels,
               topOnly: x.source === "top",
             }
           : null,
-      room,
+      inventory,
     };
   });
   rows.sort((a, b) => order[a.status] - order[b.status] || Math.abs(b.open) - Math.abs(a.open) || a.symbol.localeCompare(b.symbol));

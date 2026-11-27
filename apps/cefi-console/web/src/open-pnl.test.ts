@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { QuoterDeskStatus } from "../../shared/api.ts";
-import { openPnl } from "./open-pnl.ts";
+import { openPnl, unwind } from "./open-pnl.ts";
 
 const book = (base: string, position: string, extra: Record<string, unknown> = {}) => ({
   market: { symbol: `${base}-USDC`, baseSymbol: base, quoteSymbol: "USDC", baseAssetId: base.toLowerCase(), quoteAssetId: "usdc" },
@@ -81,17 +81,27 @@ describe("openPnl", () => {
     );
     const row = r.rows[0]!;
     expect(row.net).toBeCloseTo(1.25, 9);
-    expect(row.exit).toEqual({ price: 249, value: 49.8, pnl: -0.6, partialQty: 0.2, levels: 2, topOnly: false });
-    expect(row.room?.used).toBeCloseTo(0.75, 9);
-    expect(row.room?.lean).toBeCloseTo(0.75, 9);
-    expect([row.room?.left, row.room?.leftUsd]).toEqual([0.1, 25]);
+    // Selling 0.2 at 249 against a 250 mark: $0.20 and 40 bps worse.
+    expect(row.exit).toMatchObject({ price: 249, value: 49.8, pnl: -0.6, partialQty: 0.2, levels: 2, topOnly: false });
+    expect(row.exit?.unwindUsd).toBeCloseTo(-0.2, 9);
+    expect(row.exit?.unwindBps).toBeCloseTo(-40, 9);
+    expect(row.inventory?.used).toBeCloseTo(0.75, 9);
+    expect(row.inventory?.lean).toBeCloseTo(0.75, 9);
+    expect([row.inventory?.left, row.inventory?.leftUsd]).toEqual([0.1, 25]);
   });
 
   it("uses the room to sell for a short, and leaves fees blank for an older quoter", () => {
     const r = openPnl(desk([book("TSLA", "-0.1", { reference: "400", limit: { max: "0.4", buyRoom: "0.5", sellRoom: "0.3" } })]));
-    expect(r.rows[0]!.room?.left).toBe(0.3);
-    expect(r.rows[0]!.room?.lean).toBeCloseTo(-0.25, 9); // a quarter of the way to the limit short
+    expect(r.rows[0]!.inventory?.left).toBe(0.3);
+    expect(r.rows[0]!.inventory?.lean).toBeCloseTo(-0.25, 9); // a quarter of the way to the limit short
     expect(r.rows[0]!.fees).toBeNull();
     expect(r.rows[0]!.exit).toBeNull();
+  });
+
+  it("counts a short's unwind as worse when it buys back above the mark, and blank with no mark", () => {
+    const u = unwind(-2, 100, 100.5, 2);
+    expect(u.unwindUsd).toBeCloseTo(-1, 9);
+    expect(u.unwindBps).toBeCloseTo(-50, 9);
+    expect(unwind(1, null, 100, 1)).toEqual({ unwindUsd: null, unwindBps: null });
   });
 });

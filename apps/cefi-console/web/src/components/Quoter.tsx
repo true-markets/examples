@@ -24,10 +24,12 @@ import { Panel as Pane } from "react-resizable-panels";
 import { Divider, pane, Split } from "./Layout.tsx";
 import { Help, ShowHelp } from "./help.tsx";
 import { OpenPnlView } from "./OpenPnl.tsx";
-import { RoomBar } from "./RoomBar.tsx";
+import { InventoryBar } from "./InventoryBar.tsx";
+import { unwind } from "../open-pnl.ts";
 import { DrawerSetting, PhoneScreen, usePhone, usePhonePane } from "./Phone.tsx";
 import type {
   QuoterBookSummary,
+  QuoterExit,
   QuoterReject,
   QuoterDeskStatus,
   QuoterTakeSide,
@@ -1223,19 +1225,14 @@ function PositionCard({ s }: { s: QuoterStatus }) {
         </Row>
       )}
       {p.exit && (
-        <Row
-          label="If closed now"
-          title={`Closing the position against the exchange's book, around this book's own orders: average ${fmtPrice(p.exit.price)} over ${p.exit.levels} level${p.exit.levels === 1 ? "" : "s"}${
-            Number(p.exit.qty) < Math.abs(Number(p.qty)) ? `, and only ${fmtQty(p.exit.qty)} of it: the book is too thin for the rest` : ""
-          }${p.exit.source === "top" ? "; priced off the best bid or ask alone" : ""}. Against the average cost, before fees`}
-        >
+        <Row label="Exit PnL" title={exitTitle(p.exit, Number(p.qty), s.reference ? Number(s.reference.mid) : null)}>
           {signedUsd(Number(p.exit.pnl))}
           {(Number(p.exit.qty) < Math.abs(Number(p.qty)) || p.exit.source === "top") && <span className="text-accent">*</span>}
         </Row>
       )}
       {p.limit && Number(p.limit.max) > 0 && (
-        <Row label="Room" title="Where the position sits under the max position change">
-          <RoomBar
+        <Row label="Inventory" title="Inventory against the max position change">
+          <InventoryBar
             lean={Number(p.qty) / Number(p.limit.max)}
             max={Number(p.limit.max)}
             buyRoom={Number(p.limit.buyRoom)}
@@ -1249,6 +1246,23 @@ function PositionCard({ s }: { s: QuoterStatus }) {
       </Row>
     </Card>
   );
+}
+
+// Exit PnL's tooltip: how far down the book closing goes, and the unwind cost against the mid mark.
+function exitTitle(x: QuoterExit, position: number, mark: number | null): string {
+  const qty = Number(x.qty);
+  const u = unwind(position, mark, Number(x.price), qty);
+  return [
+    `Exit PnL: closing the position against the exchange's book, around this book's own orders, at an average ${fmtPrice(x.price)} over ${x.levels} level${x.levels === 1 ? "" : "s"}`,
+    qty < Math.abs(position) && `only ${fmtQty(x.qty)} of it: the book is too thin for the rest`,
+    x.source === "top" && "priced off the best bid or ask alone",
+    "against the average cost, before fees",
+    u.unwindUsd !== null &&
+      u.unwindBps !== null &&
+      `unwind cost ${u.unwindUsd < 0 ? "−" : "+"}${smallUsd(u.unwindUsd)}, ${Math.abs(u.unwindBps).toFixed(1)} bps ${u.unwindBps < 0 ? "worse" : "better"} than the mid`,
+  ]
+    .filter(Boolean)
+    .join("; ");
 }
 
 // How much of a budget the book's orders hold: green, yellow from 75%, red above 90%. Near the

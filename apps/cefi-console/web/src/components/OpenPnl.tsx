@@ -7,7 +7,7 @@ import { openPnl, type OpenPnlRow, type OpenPnlTotal } from "../open-pnl.ts";
 import { DataTable, type ColMeta } from "../table/DataTable.tsx";
 import { Help } from "./help.tsx";
 import { usePhone } from "./Phone.tsx";
-import { RoomBar } from "./RoomBar.tsx";
+import { InventoryBar } from "./InventoryBar.tsx";
 import { cx, Empty, Panel, SymbolLink } from "./ui.tsx";
 
 // The open PnL, book by book: what each book started with, its own position since then, and that
@@ -82,8 +82,8 @@ function Totals({ totals }: { totals: OpenPnlTotal[] }) {
 }
 
 const EXIT_TITLE =
-  "What closing the position now would come to against the exchange's book: selling a long into the bids, buying a short back from the asks, " +
-  "level by level and around this book's own orders. The PnL is against the average cost, before fees.";
+  "Exit PnL: what closing the position now would come to against the exchange's book, selling a long into the bids or buying a short back from the asks, " +
+  "level by level and around this book's own orders. Against the average cost, before fees. Hover a figure for its unwind cost: how much worse that is than the mid mark.";
 
 const col = createColumnHelper<OpenPnlRow>();
 
@@ -166,9 +166,9 @@ function BookTable({ rows, onOpen }: { rows: OpenPnlRow[]; onOpen: (symbol: stri
         }),
         col.accessor((r) => r.exit?.pnl, {
           id: "exit",
-          header: "If closed now",
+          header: "Exit PnL",
           size: 110,
-          ...num("If closed now", EXIT_TITLE, "$"),
+          ...num("Exit PnL", EXIT_TITLE, "$"),
           cell: (c) => <ExitCell r={c.row.original} />,
         }),
         col.accessor("realized", {
@@ -196,19 +196,19 @@ function BookTable({ rows, onOpen }: { rows: OpenPnlRow[]; onOpen: (symbol: stri
             </span>
           ),
         }),
-        col.accessor((r) => r.room?.lean, {
-          id: "room",
-          header: "Room",
+        col.accessor((r) => r.inventory?.lean, {
+          id: "inventory",
+          header: "Inventory",
           size: 180,
           sortUndefined: "last",
           meta: {
-            label: "Room",
+            label: "Inventory",
             title:
-              "Where the position sits under the max position change: green to the right while long, red to the left while short, out to the limit each way. " +
+              "Inventory against the max position change: green to the right while long, red to the left while short, out to the limit each way. " +
               "Sorts from the most short to the most long; filter by −100% (the limit short) to +100% (long)",
             filter: { kind: "range", scale: 100, unit: "%" },
           } satisfies ColMeta,
-          cell: (c) => <Room r={c.row.original} />,
+          cell: (c) => <Inventory r={c.row.original} />,
         }),
       ] as ColumnDef<OpenPnlRow, unknown>[],
     [onOpen],
@@ -266,7 +266,7 @@ function BookCard({ r, onOpen }: { r: OpenPnlRow; onOpen: (symbol: string) => vo
               open <Money v={r.open} />
             </span>
             <span title={EXIT_TITLE}>
-              if closed <ExitCell r={r} />
+              exit <ExitCell r={r} />
             </span>
           </div>
         </>
@@ -279,7 +279,7 @@ function BookCard({ r, onOpen }: { r: OpenPnlRow; onOpen: (symbol: string) => vo
           fees <Fees v={r.fees} />
         </span>
       </div>
-      <Room r={r} left />
+      <Inventory r={r} left />
       <div className="text-faint">since {since(r.since)}</div>
     </div>
   );
@@ -292,6 +292,9 @@ function ExitCell({ r }: { r: OpenPnlRow }) {
   const parts = [
     `average ${fmtPrice(x.price)} over ${x.levels} level${x.levels === 1 ? "" : "s"}`,
     `${fmtMoney(x.value)} ${r.position > 0 ? "in" : "out"}`,
+    x.unwindUsd !== null &&
+      x.unwindBps !== null &&
+      `unwind cost ${x.unwindUsd < 0 ? "−" : "+"}${fmtMoney(Math.abs(x.unwindUsd))} (${Math.abs(x.unwindBps).toFixed(1)} bps ${x.unwindBps < 0 ? "worse" : "better"} than the mid)`,
     x.partialQty !== null && `only ${fmtQty(x.partialQty, 6)} of the ${fmtQty(Math.abs(r.position), 6)}: the book is too thin for the rest`,
     x.topOnly && "priced off the best bid or ask alone: the full book isn't in yet",
   ].filter(Boolean);
@@ -308,10 +311,10 @@ function Fees({ v }: { v: number | null }) {
   return <span className={v > 0 ? "text-sell" : ""}>{v > 0 ? "−" + fmtMoney(v) : fmtMoney(v)}</span>;
 }
 
-// Where the position leans under the max position change, as a two-sided bar, with the room left
+// The inventory against the max position change, as a two-sided bar, with how much further it may go
 // the way it's going.
-function Room({ r, left }: { r: OpenPnlRow; left?: boolean }) {
-  const x = r.room;
+function Inventory({ r, left }: { r: OpenPnlRow; left?: boolean }) {
+  const x = r.inventory;
   if (!x)
     return (
       <span className="text-faint" title="No max position change set">
@@ -320,7 +323,7 @@ function Room({ r, left }: { r: OpenPnlRow; left?: boolean }) {
     );
   return (
     <span className="flex items-center gap-2">
-      <RoomBar lean={x.lean} max={x.max} buyRoom={x.buyRoom} sellRoom={x.sellRoom} base={r.base} />
+      <InventoryBar lean={x.lean} max={x.max} buyRoom={x.buyRoom} sellRoom={x.sellRoom} base={r.base} />
       {left && x.lean !== 0 && <span className="shrink-0 text-[11px] text-faint">{x.leftUsd === null ? fmtQty(x.left, 6) : fmtMoney(x.leftUsd)} left</span>}
     </span>
   );
@@ -356,11 +359,11 @@ function Starting({ r }: { r: OpenPnlRow }) {
 
 const Dash = () => <span className="text-faint">—</span>;
 
+// Cents from a dollar up; under a dollar 3 places, and under a cent 4, so small figures don't read as 0.
 function fmtMoney(v: number) {
   const a = Math.abs(v);
-  return (
-    (v < 0 ? "−" : "") + "$" + a.toLocaleString(undefined, { minimumFractionDigits: a < 1 && a > 0 ? 3 : 2, maximumFractionDigits: a < 1 && a > 0 ? 3 : 2 })
-  );
+  const places = a === 0 || a >= 1 ? 2 : a >= 0.01 ? 3 : 4;
+  return (v < 0 ? "−" : "") + "$" + a.toLocaleString(undefined, { minimumFractionDigits: places, maximumFractionDigits: places });
 }
 
 // Cents for bigger figures; under a dollar, enough places that small PnL doesn't read as zero.
