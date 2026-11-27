@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { QuoterBlend, QuoterReferencePreview, QuoterSource, QuoterSourceView } from "../../../shared/api.ts";
 import { useQuoterPreview, useQuoterSuggest } from "../api.ts";
 import { price as fmtPrice, quoteUnit, usd as fmtUsd } from "../format.ts";
+import { Help } from "./help.tsx";
 import { Button, cx, inputClass, Modal, selectClass } from "./ui.tsx";
 
 // Setting up a book's reference price: which sources it blends, how much each counts, and the
@@ -131,12 +132,14 @@ export function ReferenceEditor({
         </>
       }
     >
-      <p className="text-xs leading-relaxed text-muted">
-        The book quotes around a weighted average of these sources. Each source's <b>multiplier</b> turns its price into the price of one share (1 unless it
-        quotes something else); the <b>token multiplier</b> turns the price of a share into the price of one {symbol.split("-")[0]} token. A source too far from
-        the others is left out of the price until it comes back; weight 0 watches a source without using it. The preview is live and nothing is saved until you
-        press {saveLabel}.
-      </p>
+      <Help>
+        <p className="text-xs leading-relaxed text-muted">
+          The book quotes around a weighted average of these sources. Each source's <b>multiplier</b> turns its price into the price of one share (1 unless it
+          quotes something else); the <b>token multiplier</b> turns the price of a share into the price of one {symbol.split("-")[0]} token. A source too far
+          from the others is left out of the price until it comes back; weight 0 watches a source without using it. The preview is live and nothing is saved
+          until you press {saveLabel}.
+        </p>
+      </Help>
 
       <SourcesTable
         rows={list}

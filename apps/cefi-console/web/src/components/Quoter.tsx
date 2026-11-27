@@ -11,8 +11,10 @@ import {
   List,
   Play,
   Plus,
+  Radar,
   Receipt,
   RotateCcw,
+  Scale,
   SlidersHorizontal,
   Square,
   Trash2,
@@ -21,9 +23,15 @@ import {
 import { createContext, Fragment, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Panel as Pane } from "react-resizable-panels";
 import { Divider, pane, Split } from "./Layout.tsx";
+import { Help, ShowHelp } from "./help.tsx";
+import { OpenPnlView } from "./OpenPnl.tsx";
+import { QuotingView } from "./Quoting.tsx";
+import { InventoryBar } from "./InventoryBar.tsx";
+import { unwind } from "../open-pnl.ts";
 import { DrawerSetting, PhoneScreen, usePhone, usePhonePane } from "./Phone.tsx";
 import type {
   QuoterBookSummary,
+  QuoterExit,
   QuoterReject,
   QuoterDeskStatus,
   QuoterTakeSide,
@@ -79,7 +87,7 @@ export function QuoterScreen() {
   const [help, setHelp] = useHelpSetting();
   const [units, setUnits] = useStoredChoice<Units>("cefi-console:quoter-units", "bps", ["bps", "usd"]);
   // At most one breakdown open at a time; it takes the screen below the bars in place of the books.
-  const [open, setOpen] = useStoredChoice<"none" | "edge" | "params">("cefi-console:quoter-breakdown", "none", ["none", "edge", "params"]);
+  const [open, setOpen] = useStoredChoice<"none" | "edge" | "params" | "pnl">("cefi-console:quoter-breakdown", "none", ["none", "edge", "params", "pnl"]);
   // On a phone, one pane at a time in place of the breakdowns.
   const phone = usePhone();
   const [phonePane, setPhonePane] = usePhonePane<QuoterPane>("quoter", "ladder", QUOTER_PANES);
@@ -162,9 +170,9 @@ export function QuoterScreen() {
                 group: desk_,
                 node: (
                   <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto *:shrink-0">
-                    <DeskBar d={desk} stale={!!status.error} help={help} onHelp={setHelp} />
+                    <DeskBar d={desk} stale={!!status.error} help={help} onHelp={setHelp} params={false} onParams={() => setPhonePane("all-params")} />
                     <Warnings list={desk.warnings} />
-                    <AllBooksBar d={desk} open={false} onToggle={() => setPhonePane("all-params")} onUnits={setUnits} />
+                    <AllBooksBar d={desk} open={false} onToggle={() => setPhonePane("open-pnl")} onUnits={setUnits} />
                     <ActivityBar d={desk} open={false} onToggle={() => setPhonePane("trades")} />
                   </div>
                 ),
@@ -179,6 +187,8 @@ export function QuoterScreen() {
               },
               { key: "balances", label: "Balances", icon: Wallet, group: desk_, node: <SharedBalancesPanel d={desk} onOpen={select} /> },
               { key: "trades", label: "Trades", icon: Receipt, group: desk_, note: desk.trades.trades || undefined, node: <TradesView onOpen={select} /> },
+              { key: "open-pnl", label: "Open PnL", icon: Scale, group: desk_, node: <OpenPnlView d={desk} onOpen={select} /> },
+              { key: "quoting", label: "Quoting", icon: Radar, group: desk_, node: <QuotingView d={desk} onOpen={select} /> },
               {
                 key: "all-params",
                 label: "All-books parameters",
@@ -212,7 +222,14 @@ export function QuoterScreen() {
     <ShowHelp.Provider value={help}>
       <ShowUnits.Provider value={units}>
         <div className="flex h-full min-h-0 flex-col gap-2">
-          <DeskBar d={desk} stale={!!status.error} help={help} onHelp={setHelp} />
+          <DeskBar
+            d={desk}
+            stale={!!status.error}
+            help={help}
+            onHelp={setHelp}
+            params={shownOpen === "params"}
+            onParams={(o) => setOpen(o ? "params" : "none")}
+          />
           <Warnings list={desk.warnings} />
           <div className="min-h-0 flex-1">
             <Split id="quoter" orientation="horizontal">
@@ -234,11 +251,28 @@ export function QuoterScreen() {
               <Divider />
               <Pane id="quoter-book" defaultSize="72" minSize="40">
                 <div className={cx(pane, "flex flex-col gap-2")}>
-                  <AllBooksBar d={desk} open={shownOpen === "params"} onToggle={(o) => setOpen(o ? "params" : "none")} onUnits={setUnits} />
+                  <AllBooksBar d={desk} open={shownOpen === "pnl"} onToggle={(o) => setOpen(o ? "pnl" : "none")} onUnits={setUnits} />
                   <ActivityBar d={desk} open={shownOpen === "edge"} onToggle={(o) => setOpen(o ? "edge" : "none")} />
                   {shownOpen === "edge" && (
                     <div className="min-h-0 flex-1">
                       <TradesView onOpen={select} />
+                    </div>
+                  )}
+                  {shownOpen === "pnl" && (
+                    <div className="min-h-0 flex-1">
+                      <Split id="quoter-monitor" orientation="vertical">
+                        <Pane id="quoter-monitor-pnl" defaultSize="50" minSize={120}>
+                          <div className={pane}>
+                            <OpenPnlView d={desk} onOpen={select} />
+                          </div>
+                        </Pane>
+                        <Divider vertical />
+                        <Pane id="quoter-monitor-quoting" defaultSize="50" minSize={120}>
+                          <div className={pane}>
+                            <QuotingView d={desk} onOpen={select} />
+                          </div>
+                        </Pane>
+                      </Split>
                     </div>
                   )}
                   {shownOpen === "params" && (
@@ -285,9 +319,7 @@ function Warnings({ list }: { list: string[] }) {
 
 // ---------- help text ----------
 
-// The explanations under parameters and panels are for learning the quoter; once you know it, the
-// Help switch in the Quoter bar hides them. The choice is kept per browser. Tooltips stay.
-const ShowHelp = createContext(true);
+// The Help switch (see help.tsx), kept per browser.
 const helpKey = "cefi-console:quoter-help";
 
 function useHelpSetting(): [boolean, (on: boolean) => void] {
@@ -333,10 +365,6 @@ function useStoredChoice<T extends string>(key: string, fallback: T, allowed: re
   return [v, set];
 }
 
-function Help({ children }: { children: ReactNode }) {
-  return useContext(ShowHelp) ? <>{children}</> : null;
-}
-
 // ---------- bps or dollars ----------
 
 // Distances from fair value (edge, mark-outs, how far a quote sits from the mid, the spread) read
@@ -351,6 +379,21 @@ function smallUsd(v: number): string {
   if (a === 0 || a >= 1) return fmtUsd(a);
   return "$" + a.toFixed(a >= 0.01 ? 3 : 4);
 }
+
+// A fee as what it cost: −$0.004 in red, or — while it isn't known.
+function feeUsd(v: string | number | null | undefined, title?: string) {
+  if (v === null || v === undefined) return <span className="text-faint">—</span>;
+  const n = Number(v);
+  return (
+    <span className={n > 0 ? "text-sell" : ""} title={title}>
+      {n > 0 ? "−" : ""}
+      {smallUsd(n)}
+    </span>
+  );
+}
+
+// PnL after fees: realized plus open, less what the fills cost. Older quoters send no fees.
+const netPnl = (x: { realizedPnl: string; unrealizedPnl: string; fees?: string }) => Number(x.realizedPnl) + Number(x.unrealizedPnl) - Number(x.fees ?? 0);
 
 // A signed bps or dollar figure, green in our favor, red against.
 function money(v: number | null | undefined, units: Units) {
@@ -406,7 +449,22 @@ function StateBadge({ state }: { state: QuoterStatus["state"] }) {
 
 // ---------- the whole quoter ----------
 
-function DeskBar({ d, stale, help, onHelp }: { d: QuoterDeskStatus; stale: boolean; help: boolean; onHelp: (on: boolean) => void }) {
+function DeskBar({
+  d,
+  stale,
+  help,
+  onHelp,
+  params,
+  onParams,
+}: {
+  d: QuoterDeskStatus;
+  stale: boolean;
+  help: boolean;
+  onHelp: (on: boolean) => void;
+  // The all-books parameter editor, opened from the far right.
+  params: boolean;
+  onParams: (open: boolean) => void;
+}) {
   const control = useQuoterControl();
   const [confirm, setConfirm] = useState(false);
   const live = d.environment === "production";
@@ -465,6 +523,15 @@ function DeskBar({ d, stale, help, onHelp }: { d: QuoterDeskStatus; stale: boole
           <Button disabled={control.isPending} onClick={() => (live ? setConfirm(true) : control.mutate({ action: "start" }))}>
             <Play size={12} /> Start all
           </Button>
+        )}
+        {d.books.length > 0 && (
+          <OpenButton
+            open={params}
+            onToggle={onParams}
+            icon={<SlidersHorizontal size={12} />}
+            label="Parameters"
+            title={params ? "Close the all-books parameter editor" : "Edit parameters across every book"}
+          />
         )}
       </div>
       {confirm && (
@@ -536,7 +603,7 @@ function BooksPanel({ d, selected, onSelect }: { d: QuoterDeskStatus; selected?:
 }
 
 function BookRow({ b, active, onSelect }: { b: QuoterBookSummary; active: boolean; onSelect: () => void }) {
-  const pnl = Number(b.realizedPnl) + Number(b.unrealizedPnl);
+  const pnl = netPnl(b);
   return (
     <button type="button" onClick={onSelect} className={cx("block w-full px-3 py-2 text-left hover:bg-raised", active && "bg-raised")}>
       <div className="flex items-center gap-2">
@@ -551,7 +618,9 @@ function BookRow({ b, active, onSelect }: { b: QuoterBookSummary; active: boolea
           pos {signed(b.position, 6)} {b.market.baseSymbol}
           {b.reference && Number(b.position) !== 0 && <span className="text-faint"> · {signedUsd(Number(b.position) * Number(b.reference))}</span>}
         </span>
-        <span className="ml-auto">PnL {signedUsd(pnl)}</span>
+        <span className="ml-auto" title={b.fees === undefined ? "Realized plus open" : "Realized plus open, less fees"}>
+          PnL {signedUsd(pnl)}
+        </span>
       </div>
       <div className="num mt-1 flex items-center gap-3 text-[11px] text-muted">
         <span title={`The bids hold ${fmtQty(b.heldQuote, 2)} of ${fmtQty(b.budgetQuote, 2)} ${b.market.quoteSymbol}`}>
@@ -873,7 +942,7 @@ function BookCards({ s, paper }: { s: QuoterStatus; paper: boolean }) {
 }
 
 // The quoter screen's panes on a phone.
-const QUOTER_PANES = ["overview", "books", "balances", "trades", "all-params", "cards", "ladder", "params", "events"] as const;
+const QUOTER_PANES = ["overview", "books", "balances", "trades", "open-pnl", "quoting", "all-params", "cards", "ladder", "params", "events"] as const;
 type QuoterPane = (typeof QUOTER_PANES)[number];
 type BookPart = "cards" | "ladder" | "params" | "events";
 
@@ -976,10 +1045,11 @@ function Card({ title, children, action, plain }: { title: ReactNode; children: 
         ) : (
           title
         )}
-        {action && <span className="ml-auto normal-case tracking-normal">{action}</span>}
+        {/* Pulled into the header's line, so a button doesn't make this card's header taller than its neighbours'. */}
+        {action && <span className="-my-1.5 ml-auto normal-case tracking-normal">{action}</span>}
       </h2>
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-2">
-        {plain ? <div className="text-xs">{children}</div> : <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">{children}</dl>}
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-1.5">
+        {plain ? <div className="text-xs">{children}</div> : <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-[3px] text-xs">{children}</dl>}
       </div>
     </section>
   );
@@ -1101,14 +1171,23 @@ function PositionCard({ s }: { s: QuoterStatus }) {
   const quote = quoteUnit(s.market.quoteSymbol);
   const reset = useResetQuoterPosition();
   const [confirm, setConfirm] = useState(false);
-  const since = new Date(p.since);
+  const sinceText = new Date(p.since).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const sinceDay = new Date(p.since).toLocaleDateString([], { month: "short", day: "numeric" });
   return (
     <Card
       title="Position"
       action={
-        <Button size="xs" tone="ghost" onClick={() => setConfirm(true)} title="Start this book's position, PnL, volume and counts from zero">
-          <RotateCcw size={12} /> Reset
-        </Button>
+        <span className="flex items-center gap-1">
+          <span
+            className="num text-[11px] whitespace-nowrap text-faint"
+            title={`When this book's position started counting (${sinceText}): its first start, or the last reset. Carried across quoter restarts`}
+          >
+            since {sinceDay}
+          </span>
+          <Button size="xs" tone="ghost" onClick={() => setConfirm(true)} title="Start this book's position, PnL, volume and counts from zero">
+            <RotateCcw size={12} /> Reset
+          </Button>
+        </span>
       }
     >
       {confirm && (
@@ -1131,27 +1210,74 @@ function PositionCard({ s }: { s: QuoterStatus }) {
           }
         >
           <p className="text-xs leading-relaxed text-muted">
-            The position ({p.qty} {base}), its average cost, realized PnL, volume and activity counts start again from zero, and the max position change is
-            measured from now. Nothing is traded and your balances don't change; the trade journal keeps its history.
+            The position ({p.qty} {base}), its average cost, realized PnL, fees, volume and activity counts start again from zero, and the max position change
+            is measured from now. Nothing is traded and your balances don't change; the trade journal keeps its history.
           </p>
         </Modal>
       )}
-      <Row label="Since" title="When this book's position started counting: its first start, or the last reset. Carried across quoter restarts">
-        {since.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-      </Row>
-      <Row label="Change" title="Bought minus sold since then">
+      {/* Six rows at most, like the cards beside it, so it fits their height without scrolling. */}
+      <Row label="Change" title={`Bought minus sold since ${sinceText}, at its average cost`}>
         {signed(p.qty, 6)} {base}
+        {Number(p.qty) !== 0 && <span className="text-faint"> @ {fmtPrice(p.avgCost)}</span>}
       </Row>
-      <Row label="Avg cost">{Number(p.qty) === 0 ? "—" : fmtPrice(p.avgCost)}</Row>
-      <Row label="Realized PnL">{signedUsd(Number(p.realizedPnl))}</Row>
-      <Row label="Unrealized" title="The open position marked to the reference mid">
-        {signedUsd(Number(p.unrealizedPnl))}
+      <Row
+        label="PnL"
+        title={`Realized / open${p.fees === undefined ? "" : " / fees"}. Realized: on what's been bought and sold back. Open: the rest marked to the reference mid.${
+          p.fees === undefined ? "" : " Fees: what the exchange charged, turning up a few seconds after each fill."
+        }`}
+      >
+        {signedUsd(Number(p.realizedPnl))} <span className="text-faint">/</span> {signedUsd(Number(p.unrealizedPnl))}
+        {p.fees !== undefined && (
+          <>
+            {" "}
+            <span className="text-faint">/</span> {feeUsd(p.fees)}
+          </>
+        )}
       </Row>
+      {p.fees !== undefined && (
+        <Row label="After fees" title="Realized plus open, less fees">
+          {signedUsd(netPnl(p))}
+        </Row>
+      )}
+      {p.exit && (
+        <Row label="Exit PnL" title={exitTitle(p.exit, Number(p.qty), s.reference ? Number(s.reference.mid) : null)}>
+          {signedUsd(Number(p.exit.pnl))}
+          {(Number(p.exit.qty) < Math.abs(Number(p.qty)) || p.exit.source === "top") && <span className="text-accent">*</span>}
+        </Row>
+      )}
+      {p.limit && Number(p.limit.max) > 0 && (
+        <Row label="Inventory" title="Inventory against the max position change">
+          <InventoryBar
+            lean={Number(p.qty) / Number(p.limit.max)}
+            max={Number(p.limit.max)}
+            buyRoom={Number(p.limit.buyRoom)}
+            sellRoom={Number(p.limit.sellRoom)}
+            base={base}
+          />
+        </Row>
+      )}
       <Row label="Volume" title={`${fmtQty(p.volumeBase)} ${base}`}>
         {fmtUsd(Number(p.volumeQuote))}
       </Row>
     </Card>
   );
+}
+
+// Exit PnL's tooltip: how far down the book closing goes, and the unwind cost against the mid mark.
+function exitTitle(x: QuoterExit, position: number, mark: number | null): string {
+  const qty = Number(x.qty);
+  const u = unwind(position, mark, Number(x.price), qty);
+  return [
+    `Exit PnL: closing the position against the exchange's book, around this book's own orders, at an average ${fmtPrice(x.price)} over ${x.levels} level${x.levels === 1 ? "" : "s"}`,
+    qty < Math.abs(position) && `only ${fmtQty(x.qty)} of it: the book is too thin for the rest`,
+    x.source === "top" && "priced off the best bid or ask alone",
+    "against the average cost, before fees",
+    u.unwindUsd !== null &&
+      u.unwindBps !== null &&
+      `unwind cost ${u.unwindUsd < 0 ? "−" : "+"}${smallUsd(u.unwindUsd)}, ${Math.abs(u.unwindBps).toFixed(1)} bps ${u.unwindBps < 0 ? "worse" : "better"} than the mid`,
+  ]
+    .filter(Boolean)
+    .join("; ");
 }
 
 // How much of a budget the book's orders hold: green, yellow from 75%, red above 90%. Near the
@@ -1790,7 +1916,7 @@ function OpenButton({
   );
 }
 
-// Results across every book; opens every book's edge and every trade.
+// Results across every book; opens the monitor: the open PnL and the quoting, book by book.
 function AllBooksBar({ d, open, onToggle, onUnits }: { d: QuoterDeskStatus; open: boolean; onToggle: (open: boolean) => void; onUnits: (u: Units) => void }) {
   const units = useUnits();
   if (!d.books.length) return null;
@@ -1804,22 +1930,22 @@ function AllBooksBar({ d, open, onToggle, onUnits }: { d: QuoterDeskStatus; open
           <OpenButton
             open={open}
             onToggle={onToggle}
-            icon={<SlidersHorizontal size={12} />}
-            label="Parameters"
-            title={open ? "Close the all-books parameter editor" : "Edit parameters across every book"}
+            icon={<Radar size={12} />}
+            label="Monitor"
+            title={open ? "Close the monitor" : "Every book at once: its open PnL, and what it's quoting against the exchange"}
           />
         </>
       }
     >
       {d.totals.map((x) => {
-        const pnl = Number(x.realizedPnl) + Number(x.unrealizedPnl);
+        const pnl = netPnl(x);
         return (
           <Fragment key={x.quote}>
-            <span className={barItem} title="Realized plus unrealized, since each book's position started counting">
+            <span className={barItem} title="Realized plus unrealized, less fees, since each book's position started counting">
               <span className={barLabel}>PnL</span>
               {signed(pnl)} {quoteUnit(x.quote)}
               <span className="text-faint">
-                ({signed(x.realizedPnl)} realized · {signed(x.unrealizedPnl)} open)
+                ({signed(x.realizedPnl)} realized · {signed(x.unrealizedPnl)} open{x.fees !== undefined && <> · {feeUsd(x.fees)} fees</>})
               </span>
             </span>
             <span className={barItem}>
@@ -1852,7 +1978,7 @@ function AllBooksBar({ d, open, onToggle, onUnits }: { d: QuoterDeskStatus; open
   );
 }
 
-// What every book has been doing; opens the all-books parameter editor.
+// What every book has been doing; opens every trade this run.
 function ActivityBar({ d, open, onToggle }: { d: QuoterDeskStatus; open: boolean; onToggle: (open: boolean) => void }) {
   const reset = useResetQuoterRejects();
   if (!d.books.length) return null;
@@ -2165,8 +2291,21 @@ interface TradeRow {
   fair: number | null; // null: no reference price at the fill (just after a start, or filled while down)
   // Edge and mark-outs in the unit the switch shows: bps, or dollars of this trade's notional.
   edge: number | null;
+  // The fee in the same unit, as a cost (positive); null while it isn't known yet. pending: the
+  // quoter is still waiting to read it.
+  fee: number | null;
+  feePending: boolean;
+  liquidity: string | undefined;
+  // Edge at fill less the fee; null without both.
+  net: number | null;
   markouts: (number | null)[];
   kept: number | null;
+}
+
+// Edge at fill less fees, in dollars or bps; null until both are in.
+function netEdge(b: QuoterTradeSummary, usd: boolean): number | null {
+  if (usd) return b.edgePnl === null || b.fees === undefined ? null : b.edgePnl - b.fees;
+  return b.edgeBps === null || b.feeBps === undefined || b.feeBps === null ? null : b.edgeBps - b.feeBps;
 }
 
 const tradeHelper = createColumnHelper<TradeRow>();
@@ -2296,6 +2435,36 @@ function SummaryTable({
         } satisfies ColMeta,
         cell: (c) => money(c.getValue(), units),
       }),
+      summaryHelper.accessor((b) => (usd ? (b.fees ?? null) : (b.feeBps ?? null)), {
+        id: "fees",
+        header: `Fees ${usd ? "$" : "bps"}`,
+        size: 90,
+        sortingFn: nullsLast("fees"),
+        meta: {
+          label: "Fees",
+          align: "right",
+          title: usd ? "What the exchange charged, summed" : "What the exchange charged, notional-weighted, in bps",
+          filter: { kind: "range", unit: usd ? "$" : undefined },
+        } satisfies ColMeta,
+        cell: (c) => {
+          const v = c.getValue();
+          const waiting = c.row.original.feesPending ?? 0;
+          return (
+            <span title={waiting ? `${waiting} trade${waiting === 1 ? "" : "s"} still waiting for the fee` : undefined}>
+              {v === null ? <span className="text-faint">—</span> : money(-v, units)}
+              {waiting > 0 && <span className="text-faint">…</span>}
+            </span>
+          );
+        },
+      }),
+      summaryHelper.accessor((b) => netEdge(b, usd), {
+        id: "netEdge",
+        header: `Net edge ${usd ? "$" : "bps"}`,
+        size: 100,
+        sortingFn: nullsLast("netEdge"),
+        meta: { label: "Net edge", align: "right", title: "Edge at fill less fees", filter: { kind: "range", unit: usd ? "$" : undefined } } satisfies ColMeta,
+        cell: (c) => money(c.getValue(), units),
+      }),
       ...hz.map((h, i) =>
         summaryHelper.accessor((b) => (usd ? b.markedPnl[i] : b.markouts[i]) ?? null, {
           id: `m${h}`,
@@ -2414,6 +2583,8 @@ function TradesTable({ id, trades, hz, onOpen }: { id: string; trades: QuoterTra
         const priced = !t.recovered && !t.unpriced;
         const notional = Number(t.notional);
         const shown = (v: number | null | undefined) => (v === null || v === undefined ? null : usd ? (v / 10_000) * notional : v);
+        const fee = t.fee === null || t.fee === undefined ? null : usd ? Number(t.fee) : (t.feeBps ?? null);
+        const edge = priced ? shown(t.edgeBps) : null;
         return {
           id: String(t.id),
           timeMs: Date.parse(t.time),
@@ -2425,7 +2596,12 @@ function TradesTable({ id, trades, hz, onOpen }: { id: string; trades: QuoterTra
           price: Number(t.price),
           notional,
           fair: priced ? Number(t.refMid) : null,
-          edge: priced ? shown(t.edgeBps) : null,
+          edge,
+          fee,
+          // The quoter reads fees for an hour after each fill; an older quoter never does.
+          feePending: fee === null && !!t.orderId && Date.now() - Date.parse(t.time) < 3_600_000,
+          liquidity: t.liquidity,
+          net: edge !== null && fee !== null ? edge - fee : null,
           markouts: t.markouts.map(shown),
           // Not over an edge under 1 bps: -8 over +0.2 reads as -4000%, which says nothing.
           kept: priced && last !== null && last !== undefined && t.edgeBps >= 1 ? last / t.edgeBps : null,
@@ -2518,6 +2694,39 @@ function TradesTable({ id, trades, hz, onOpen }: { id: string; trades: QuoterTra
           title: `${usd ? "Dollars" : "bps"} from fair value in our favor, at the fill. — when there was no reference price then, and the trade is left out of the averages`,
           filter: { kind: "range", unit: usd ? "$" : undefined },
         } satisfies ColMeta,
+        cell: (c) => money(c.getValue(), units),
+      }),
+      tradeHelper.accessor("fee", {
+        id: "fee",
+        header: `Fee ${usd ? "$" : "bps"}`,
+        size: 80,
+        sortingFn: nullsLast("fee"),
+        meta: {
+          label: "Fee",
+          align: "right",
+          title:
+            "What the exchange charged, and whether the fill was maker or taker. It turns up a few seconds after the fill, once the quoter reads the account's fills",
+          filter: { kind: "range", unit: usd ? "$" : undefined },
+        } satisfies ColMeta,
+        cell: (c) => {
+          const t = c.row.original;
+          if (t.fee === null)
+            return t.feePending ? (
+              <span className="text-faint" title="Waiting for the exchange's fee">
+                …
+              </span>
+            ) : (
+              <span className="text-faint">—</span>
+            );
+          return <span title={t.liquidity?.toLowerCase()}>{money(-t.fee, units)}</span>;
+        },
+      }),
+      tradeHelper.accessor("net", {
+        id: "net",
+        header: `Net ${usd ? "$" : "bps"}`,
+        size: 80,
+        sortingFn: nullsLast("net"),
+        meta: { label: "Net", align: "right", title: "Edge at fill less the fee", filter: { kind: "range", unit: usd ? "$" : undefined } } satisfies ColMeta,
         cell: (c) => money(c.getValue(), units),
       }),
       ...hz.map((h, i) =>

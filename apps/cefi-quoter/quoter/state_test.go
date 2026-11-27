@@ -148,3 +148,40 @@ func TestResetPosition(t *testing.T) {
 		t.Fatalf("after reset %+v %+v", s.Position, s.Stats)
 	}
 }
+
+// The book summary carries what the open PnL is made of: the position, its average cost, and
+// when the position started counting.
+func TestSummaryExplainsOpenPnl(t *testing.T) {
+	desk := startDesk(t, newFake(map[string]string{"btc": "1", "usdc": "100000"}))
+	e := addBook(t, desk, "BTC-USDC", testParams())
+	fillBook(e, Buy, "0.002", "50000")
+	fillBook(e, Buy, "0.002", "51000")
+	s := e.Summary()
+	if !s.Position.Equal(d("0.004")) || !s.AvgCost.Equal(d("50500")) {
+		t.Fatalf("position %s avg %s", s.Position, s.AvgCost)
+	}
+	if !s.PositionSince.Equal(e.Status().Position.Since) || s.PositionSince.IsZero() {
+		t.Fatalf("since %v", s.PositionSince)
+	}
+}
+
+// The book summary carries what the book is quoting against the exchange: the EBBO, its resting
+// quotes, the skew and its cap, and the take view, for the desk's quoting table.
+func TestSummaryShowsQuoting(t *testing.T) {
+	fx := newFake(map[string]string{"btc": "1", "usdc": "100000"})
+	desk := startDesk(t, fx)
+	p := testParams()
+	p.MaxPosition, p.SkewBps = d("0.01"), 10
+	e := addBook(t, desk, "BTC-USDC", p)
+	ebbo(desk, "BTC-USDC", "49990", "1", "50010", "1")
+	tick(desk, "BTC-USD", "50000")
+	e.SetEnabled(true)
+	waitFor(t, "six resting orders", func() bool { return fx.resting("") == 6 && settled(e) })
+	s := e.Summary()
+	if s.BestBid == nil || !s.BestBid.Equal(d("49990")) || s.BestAsk == nil || !s.BestAsk.Equal(d("50010")) {
+		t.Fatalf("bbo %v %v", s.BestBid, s.BestAsk)
+	}
+	if len(s.Quotes) != 6 || s.SkewMaxBps != 10 || s.Mid == nil || s.Taking == nil {
+		t.Fatalf("quotes %d skew max %v mid %v taking %v", len(s.Quotes), s.SkewMaxBps, s.Mid, s.Taking)
+	}
+}

@@ -50,6 +50,7 @@ type PositionState struct {
 	Qty         decimal.Decimal `json:"qty"`
 	AvgCost     decimal.Decimal `json:"avgCost"`
 	RealizedPnl decimal.Decimal `json:"realizedPnl"`
+	Fees        decimal.Decimal `json:"fees"`
 	VolumeBase  decimal.Decimal `json:"volumeBase"`
 	VolumeQuote decimal.Decimal `json:"volumeQuote"`
 }
@@ -85,7 +86,7 @@ func (e *Engine) saveState() BookState {
 	p := e.pos
 	s := BookState{
 		Since:    e.since,
-		Position: PositionState{Qty: p.qty, AvgCost: p.avgCost, RealizedPnl: p.realized, VolumeBase: p.volBase, VolumeQuote: p.volQuote},
+		Position: PositionState{Qty: p.qty, AvgCost: p.avgCost, RealizedPnl: p.realized, Fees: p.fees, VolumeBase: p.volBase, VolumeQuote: p.volQuote},
 		Stats:    e.stats,
 		Events:   append([]Event{}, e.events[max(0, len(e.events)-savedEvents):]...),
 		Orders:   []OrderState{},
@@ -104,7 +105,7 @@ func (e *Engine) restoreState(s BookState, savedAt time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	p := s.Position
-	e.pos = position{qty: p.Qty, avgCost: p.AvgCost, realized: p.RealizedPnl, volBase: p.VolumeBase, volQuote: p.VolumeQuote}
+	e.pos = position{qty: p.Qty, avgCost: p.AvgCost, realized: p.RealizedPnl, fees: p.Fees, volBase: p.VolumeBase, volQuote: p.VolumeQuote}
 	e.stats = s.Stats
 	if !s.Since.IsZero() {
 		e.since = s.Since
@@ -323,7 +324,7 @@ func (d *Desk) RecoverMissedFills(ctx context.Context, h OrderHistory) []string 
 					price = v
 				}
 			}
-			w.e.applyRecoveredFill(Fill{Side: o.Side, Qty: missed, Price: price, Level: o.Level, TakeKind: o.TakeKind, Time: time.Now()})
+			w.e.applyRecoveredFill(Fill{OrderID: string(ro.ID), Side: o.Side, Qty: missed, Price: price, Level: o.Level, TakeKind: o.TakeKind, Time: time.Now()})
 			out = append(out, fmt.Sprintf("%s: %s %s @ %s filled while the quoter was down; counted in the position", w.e.market.Symbol, o.Side, missed, price))
 		}
 	}

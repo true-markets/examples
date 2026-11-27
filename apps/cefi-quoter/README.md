@@ -87,13 +87,14 @@ The connection is plain FIX over TCP, not TLS: the private network is what prote
                       │  desk: routes each message to its book                        │
  Coinbase/HL/Kraken ─▶│   ┌─ book BTC-USDC ─────────────────────────────┐             │
   (one connection,    │   │ reference ─▶ ladder ─▶ plan ─▶ reserve ─▶ send ──REST/FIX──▶ exchange
-   every product)     │   │ EBBO, drop copy ─▶ order book, position      │   ▲         │
- CeFi WS: EBBO ──────▶│   └──────────────────────────────────────────────┘   │         │
+   every product)     │   │ EBBO, depth, drop copy ─▶ orders, position   │   ▲         │
+ CeFi WS: EBBO,DEPTH─▶│   └──────────────────────────────────────────────┘   │         │
  CeFi WS: DROPCOPY ──▶│   ┌─ book ETH-USDC ── (the same) ──────────────────┐ │         │
                       │   └────────────────────────────────────────────────┘ │         │
                       │                                                      │         │
  GET /balances ──────▶│   ledger: one view of the balances for every book ───┘         │
   (every 10 s)        │                                                                │
+ GET /orders/trade ──▶│   journal: each fill's fee, while any is still missing         │
                       └────────────────────── management API :4860 ────────────────────┘
                                                     ▲
                                          CeFi Console / curl
@@ -148,7 +149,9 @@ Left out of the port: the momentum taker (retired in the Python quoter: it made 
 
 Every fill goes in a journal ([quoter/journal.go](quoter/journal.go)) with its **edge at fill**: how far the price was from fair value (the reference mid) in your favor, in bps. The same measure is taken again 30 seconds and 5 minutes later; those are the **mark-outs**. A maker is filled exactly when the market moves through its quote, so the mid often keeps going. A fill with +10 bps of edge that marks out at −5 bps was a loser, however good it looked when it happened. That's adverse selection, and it's what the spread has to pay for. **Kept** is the mark-out over the edge at fill: 100% means the edge held, and below 0 means the market took all of it and more. It's left blank when the edge at fill is under 1 bps, where the ratio means nothing. A fill that came in while the book had no reference price has no edge to measure; it shows — and is left out of the averages.
 
-The Quoter screen's Trades view shows every fill with its mark-outs, and a summary per book and across all books, weighted by notional. Watch it when you change the spread: a wider spread earns more edge at fill, and the mark-outs show how much of it survives. The journal is saved in the state file, so it survives a restart.
+**Fees.** The drop copy doesn't say what a fill cost. So while any fill from the last hour has no fee yet, the quoter reads the account's fills (`GET /orders/trade`, on the balance cadence) and charges each of its fills its order's `trade_fee_bps` on the fill's own notional. The fee goes on the trade, with whether it was a maker or taker fill, and into the book's position, where it's counted against the PnL. Realized and open PnL are before fees, so the Quoter screen shows them and the fees side by side, and the PnL after fees. A fill that can't be tied to an exchange order, or whose fee doesn't turn up within the hour, is left without one.
+
+The Quoter screen's Trades view shows every fill with its mark-outs and fee, and a summary per book and across all books, weighted by notional. Watch it when you change the spread: a wider spread earns more edge at fill, and the mark-outs show how much of it survives. The journal is saved in the state file, so it survives a restart.
 
 ### Following orders: the drop copy
 
@@ -244,13 +247,13 @@ Before a book sends a new order or a modify, it calls `Ledger.Reserve`. That han
 
 ### Restarts: the state file
 
-Each book's position, average cost, PnL, volume, activity counts and recent events carry across restarts, and so does the trade journal. They live in a state file, one per environment: `state.production.json`, `state.uat.json` or `state.paper.json` (`QUOTER_STATE_FILE` to put it elsewhere). The quoter writes it every two seconds when something changed, and once more on shutdown, in one step so a crash never leaves half a file. Settings stay in `books.json`. The state is about what happened; the books file is about what you want.
+Each book's position, average cost, PnL, fees, volume, activity counts and recent events carry across restarts, and so does the trade journal. They live in a state file, one per environment: `state.production.json`, `state.uat.json` or `state.paper.json` (`QUOTER_STATE_FILE` to put it elsewhere). The quoter writes it every two seconds when something changed, and once more on shutdown, in one step so a crash never leaves half a file. Settings stay in `books.json`. The state is about what happened; the books file is about what you want.
 
-- **The position counts from a point you choose.** Each book's Position card says since when: its first start, or the last time you pressed **Reset** (`POST /api/books/{symbol}/reset`). The max position change is measured from there. Reset starts the position, PnL, volume and counts from zero. It trades nothing, changes no balance, and leaves the trade journal alone.
+- **The position counts from a point you choose.** Each book's Position card says since when: its first start, or the last time you pressed **Reset** (`POST /api/books/{symbol}/reset`). The max position change is measured from there. Reset starts the position, PnL, fees, volume and counts from zero. It trades nothing, changes no balance, and leaves the trade journal alone.
 - **A crash doesn't lose fills.** A clean shutdown pulls every quote first, so nothing can fill while the quoter is down. A crash (or `kill -9`) can leave quotes resting, and they can keep filling until the next start cancels them. The state lists what each book had resting and how much of each order had filled. On the next start, after those orders are canceled, the quoter reads the exchange's recent order history. Whatever filled since the save goes into the position, priced at the order's last price (what a resting post-only order trades at). The log, the event feed and the trade journal mark these fills as filled while the quoter was down. They're left out of the edge averages, since there was no fair value at the time to measure them against.
 - **Mark-outs that came due while it was down stay empty.** The price at that moment is gone, and marking late would be wrong. Ones still to come are taken as usual.
 - **Each book waits for its reference sources.** They connect one at a time and rarely agree to the bps, so for the first 10 seconds a book with a blend waits for every weighted source to report before it prices off the ones that have. Quoting around the first source alone gets picked off as the rest arrive.
-- **Paper mode carries its account too.** `state.paper.json` keeps the paper balances, so restored positions still match them. `PAPER_BALANCES` only sets the balances the first time.
+- **Paper mode carries its account too.** `state.paper.json` keeps the paper balances, so restored positions still match them. `PAPER_BALANCES` only sets the balances the first time. Paper fills pay `PAPER_MAKER_FEE_BPS` or `PAPER_TAKER_FEE_BPS` (0 by default, like the published CeFi schedule) out of the USDC balance.
 - **It belongs to one account.** A state file from another client is refused at start, rather than overwritten. Books start stopped, as always, unless `QUOTER_AUTOSTART` is on.
 
 To start everything from zero, stop the quoter and delete the state file.

@@ -99,3 +99,36 @@ func TestTakeFillsAgainstTheReferenceBook(t *testing.T) {
 		}
 	}
 }
+
+// A resting order filled by the reference market pays the maker fee out of the quote balance and
+// is listed with it, as GET /orders/trade lists fills; every tick also goes out as DEPTH.
+func TestFillsPayFeesAndAreListed(t *testing.T) {
+	ctx := context.Background()
+	x := New("USDC", map[string]decimal.Decimal{"USDC": d("1000"), "BTC": d("0")})
+	x.MakerFeeBps, x.TakerFeeBps = d("2"), d("5")
+	var depth []tm.Message
+	x.OnMarket = func(m tm.Message) {
+		if m.Channel == "DEPTH" {
+			depth = append(depth, m)
+		}
+	}
+	l := x.Listings()[0]
+	m := quoter.Market{Symbol: l.Symbol, InstrumentID: l.InstrumentID, BaseAssetID: l.BaseAssetID, QuoteAssetID: l.QuoteAssetID}
+	o := quoter.NewBook("cq", l.InstrumentID).BeginCreate(quoter.Buy, 0, d("100"), d("2"))
+	id, err := x.Transport(m).Create(ctx, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	x.OnTick(l.Symbol, reference.Tick{Bid: d("98"), Ask: d("99"), BidSize: d("1"), AskSize: d("1"), Mid: d("98.5")})
+
+	fills, _ := x.Trades(ctx, 1)
+	if len(fills) != 1 || string(fills[0].OrderID) != id || fills[0].FeeBps != "2" || fills[0].Liquidity != "MAKER" {
+		t.Fatalf("fills %+v", fills)
+	}
+	if got := x.Holdings()["USDC"]; !got.Equal(d("799.96")) { // 1000 - 200 - 0.04
+		t.Fatalf("USDC %s", got)
+	}
+	if len(depth) != 1 || depth[0].Update != "SNAPSHOT" {
+		t.Fatalf("depth %+v", depth)
+	}
+}

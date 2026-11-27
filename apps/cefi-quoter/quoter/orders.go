@@ -110,6 +110,7 @@ func (o *Order) Status() string {
 // Fill is one execution of one of our orders.
 type Fill struct {
 	ExternalID string
+	OrderID    string // the exchange's id, when known: how the fee is found later
 	Side       Side
 	Level      int
 	TakeKind   TakeKind // set for a take's fill
@@ -390,7 +391,7 @@ func (b *Book) ApplyDropCopy(d tm.DropCopy) DropCopyResult {
 	if exec, err := decimal.NewFromString(d.ExecutedQty); err == nil && exec.GreaterThan(o.Executed) {
 		qty := exec.Sub(o.Executed)
 		price := firstDecimal(d.TradePrice, d.ExecutedVwap, d.Price)
-		res.Fill = &Fill{ExternalID: o.ExternalID, Side: o.Side, Level: o.Level, TakeKind: o.TakeKind, Price: price, Qty: qty, Time: time.Now()}
+		res.Fill = &Fill{ExternalID: o.ExternalID, OrderID: o.OrderID, Side: o.Side, Level: o.Level, TakeKind: o.TakeKind, Price: price, Qty: qty, Time: time.Now()}
 		o.Executed = exec
 	}
 	if v, err := decimal.NewFromString(d.LeavesQty); err == nil {

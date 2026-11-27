@@ -9,7 +9,9 @@
 // rest is canceled.
 //
 // It answers every request with the same drop-copy messages the real exchange sends, so the
-// quoter runs exactly the code it runs live.
+// quoter runs exactly the code it runs live. Fills are charged MakerFeeBps or TakerFeeBps out of
+// the quote balance, and listed with their fee the way GET /orders/trade lists them. Each tick
+// also goes out as a one-level DEPTH snapshot.
 package paper
 
 import (
@@ -61,6 +63,10 @@ type Exchange struct {
 	OnMarket func(tm.Message)
 	// Latency between a request and its drop copy.
 	Latency time.Duration
+	// MakerFeeBps and TakerFeeBps are charged on each fill's notional, in the quote asset: maker
+	// for a resting order, taker for a take.
+	MakerFeeBps decimal.Decimal
+	TakerFeeBps decimal.Decimal
 
 	mu       sync.Mutex
 	balances map[string]decimal.Decimal
@@ -68,6 +74,41 @@ type Exchange struct {
 	nextID   int
 	last     map[string]reference.Tick // by symbol: the book a take fills against
 	outbox   chan delivery             // drop copies, delivered in the order they happened
+	fills    []tm.TradeFill            // newest last, for Trades
+	nextFill int
+}
+
+// fillsKept is how many fills Trades can list.
+const fillsKept = 1000
+
+// chargeLocked takes a fill's fee out of the quote balance and lists the fill with it.
+func (x *Exchange) chargeLocked(o *order, qty decimal.Decimal, taker bool) {
+	bps, liq := x.MakerFeeBps, "MAKER"
+	if taker {
+		bps, liq = x.TakerFeeBps, "TAKER"
+	}
+	fee := qty.Mul(o.price).Mul(bps).Div(decimal.NewFromInt(10_000))
+	x.balances[o.quote] = x.balances[o.quote].Sub(fee)
+	x.nextFill++
+	x.fills = append(x.fills, tm.TradeFill{
+		OrderID: tm.Str(o.id), MatchID: tm.Str(strconv.Itoa(x.nextFill)), Side: o.side, Price: o.price.String(), Qty: qty.String(),
+		FeeBps: bps.String(), Liquidity: liq, Timestamp: strconv.FormatInt(time.Now().UnixNano(), 10),
+	})
+	if len(x.fills) > fillsKept {
+		x.fills = x.fills[len(x.fills)-fillsKept:]
+	}
+}
+
+// Trades lists the paper fills, newest first, with their fees: GET /orders/trade.
+func (x *Exchange) Trades(_ context.Context, max int) ([]tm.TradeFill, error) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	n := min(len(x.fills), max*100)
+	out := make([]tm.TradeFill, 0, n)
+	for i := len(x.fills) - 1; i >= len(x.fills)-n; i-- {
+		out = append(out, x.fills[i])
+	}
+	return out, nil
 }
 
 type delivery struct {
@@ -219,6 +260,7 @@ func (x *Exchange) takeLocked(n *order) {
 				x.balances[n.base], x.balances[n.quote] = x.balances[n.base].Sub(qty), x.balances[n.quote].Add(notional)
 			}
 			n.executed = qty
+			x.chargeLocked(n, qty, true)
 			status := "PARTIAL"
 			if qty.Equal(n.qty) {
 				status = "FILLED"
@@ -235,11 +277,14 @@ func (x *Exchange) takeLocked(n *order) {
 // OnTick publishes symbol's EBBO from the reference and fills every resting order the reference
 // market has traded through.
 func (x *Exchange) OnTick(symbol string, t reference.Tick) {
-	// The EBBO goes out after the lock is released, in tick order.
-	var ebbo *tm.Message
+	// The EBBO and DEPTH go out after the lock is released, in tick order.
+	var ebbo, depth *tm.Message
 	defer func() {
 		if ebbo != nil {
 			x.OnMarket(*ebbo)
+		}
+		if depth != nil {
+			x.OnMarket(*depth)
 		}
 	}()
 	x.mu.Lock()
@@ -258,6 +303,12 @@ func (x *Exchange) OnTick(symbol string, t reference.Tick) {
 		}{t.Ask.String(), t.AskSize.String()}
 		raw, _ := json.Marshal(e)
 		ebbo = &tm.Message{Channel: "EBBO", Data: raw}
+		raw, _ = json.Marshal(tm.Depth{
+			Symbol: symbol,
+			Bids:   []tm.Level{{Price: t.Bid.String(), Qty: t.BidSize.String()}},
+			Asks:   []tm.Level{{Price: t.Ask.String(), Qty: t.AskSize.String()}},
+		})
+		depth = &tm.Message{Channel: "DEPTH", Update: "SNAPSHOT", Data: raw}
 	}
 	for id, o := range x.orders {
 		if o.symbol != symbol {
@@ -275,6 +326,7 @@ func (x *Exchange) OnTick(symbol string, t reference.Tick) {
 			x.balances[o.base], x.balances[o.quote] = x.balances[o.base].Sub(qty), x.balances[o.quote].Add(notional)
 		}
 		o.executed = o.qty
+		x.chargeLocked(o, qty, false)
 		delete(x.orders, id)
 		x.emitLocked(o, "TRADE", "FILLED", "", &qty)
 	}

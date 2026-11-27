@@ -375,7 +375,19 @@ export interface QuoterStatus {
   skewBps: number;
   // Since is when the position started counting (the book's first start, or its last reset); it
   // carries across quoter restarts.
-  position: { qty: string; avgCost: string; realizedPnl: string; unrealizedPnl: string; volumeBase: string; volumeQuote: string; since: string };
+  position: {
+    qty: string;
+    avgCost: string;
+    realizedPnl: string; // before fees
+    unrealizedPnl: string;
+    // What the exchange charged for the fills counted here, as far as they're known. Older quoters don't send it.
+    fees?: string;
+    exit?: QuoterExit | null;
+    limit?: QuoterPositionLimit | null;
+    volumeBase: string;
+    volumeQuote: string;
+    since: string;
+  };
   // Free is shared by every book on the asset; budget and held are this book's.
   balances: { freeBase: string; freeQuote: string; budgetBase: string; budgetQuote: string; heldBase: string; heldQuote: string; readAt: string | null };
   orders: QuoterOrder[];
@@ -420,12 +432,31 @@ export interface QuoterTakeView {
 type QuoterStats = QuoterStatus["stats"];
 
 // Every book on one quote currency, added up.
+// What closing a book's position now would fetch against the exchange's book, level by level,
+// leaving out its own orders. source "top" when only the best bid or ask was known.
+export interface QuoterExit {
+  price: string; // average
+  qty: string; // how much it could close; under the position when the book is thin
+  value: string; // quote currency in (long) or out (short)
+  pnl: string; // against the average cost, on qty
+  levels: number;
+  source: "depth" | "top";
+}
+
+// The max position change in base, and the room left under it each way.
+export interface QuoterPositionLimit {
+  max: string;
+  buyRoom: string;
+  sellRoom: string;
+}
+
 export interface QuoterTotals {
   quote: string;
   books: number;
   quoting: number;
   realizedPnl: string;
   unrealizedPnl: string;
+  fees?: string;
   volumeQuote: string;
   orders: number;
   stats: QuoterStats;
@@ -448,6 +479,12 @@ export interface QuoterTrade {
   markouts: (number | null)[];
   recovered?: boolean; // filled while the quoter was down: no fair value, left out of the averages
   unpriced?: boolean; // filled while the book had no reference price: the same
+  // The fee charged, in quote currency, and its rate: null until the quoter reads it from the
+  // account's fills (a few seconds after the fill). Older quoters don't send them.
+  orderId?: string; // the exchange's id for the order that filled
+  fee?: string | null;
+  feeBps?: number | null;
+  liquidity?: "MAKER" | "TAKER" | "SETTER";
 }
 
 export interface QuoterTradeSummary {
@@ -456,6 +493,9 @@ export interface QuoterTradeSummary {
   notional: string;
   edgeBps: number | null;
   edgePnl: number | null; // edge at fill in quote currency, summed
+  fees?: number; // charged on the trades whose fee is known, in quote currency
+  feeBps?: number | null; // notional-weighted over them
+  feesPending?: number; // trades still waiting for their fee
   markouts: (number | null)[];
   retention: (number | null)[];
   marked: number[];
@@ -492,8 +532,15 @@ export interface QuoterBookSummary {
   reason?: string;
   reference: string | null;
   position: string;
+  // What the open PnL is made of: (reference − avgCost) × position, counting the book's own fills
+  // since positionSince. Older quoters don't send these.
+  avgCost?: string;
+  positionSince?: string;
   realizedPnl: string;
   unrealizedPnl: string;
+  fees?: string;
+  exit?: QuoterExit | null;
+  limit?: QuoterPositionLimit | null;
   orders: number;
   fills: number;
   heldBase: string;
@@ -504,6 +551,16 @@ export interface QuoterBookSummary {
   maxBaseAlloc: string;
   volumeQuote: string;
   stats: QuoterStats;
+  // What the book is quoting against the exchange right now; older quoters don't send these. The
+  // EBBO, the skewed mid the ladder centres on, the skew (+ shades the mid down while long) and its
+  // cap, the book's own resting quotes (takes left out), and how close each side is to a take.
+  bestBid?: string | null;
+  bestAsk?: string | null;
+  mid?: string | null;
+  skewBps?: number;
+  skewMaxBps?: number;
+  quotes?: QuoterOrder[];
+  taking?: QuoterTakeView | null;
 }
 
 // One asset in the ledger every book shares: free = spendable - foreign holds - our holds.

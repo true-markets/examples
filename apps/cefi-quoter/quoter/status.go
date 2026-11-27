@@ -43,14 +43,29 @@ type Price struct {
 type PositionStatus struct {
 	Qty         decimal.Decimal `json:"qty"`
 	AvgCost     decimal.Decimal `json:"avgCost"`
-	RealizedPnl decimal.Decimal `json:"realizedPnl"`
+	RealizedPnl decimal.Decimal `json:"realizedPnl"` // before fees
 	// Unrealized marks the open position to the reference mid.
 	UnrealizedPnl decimal.Decimal `json:"unrealizedPnl"`
-	VolumeBase    decimal.Decimal `json:"volumeBase"`
-	VolumeQuote   decimal.Decimal `json:"volumeQuote"`
+	// Fees is what the exchange charged for the fills counted here, as far as they're known yet.
+	Fees decimal.Decimal `json:"fees"`
+	// Exit is what closing the position now would fetch against the exchange's book; nil when
+	// flat, or with no book to price it against.
+	Exit *Exit `json:"exit"`
+	// Limit is the max position change in base and the room left under it each way; nil when
+	// the book has no limit, or no price to convert one set in dollars.
+	Limit       *PositionLimit  `json:"limit"`
+	VolumeBase  decimal.Decimal `json:"volumeBase"`
+	VolumeQuote decimal.Decimal `json:"volumeQuote"`
 	// Since is when the position started counting: the book's first start, or its last reset.
 	// It carries across restarts.
 	Since time.Time `json:"since"`
+}
+
+// PositionLimit is how far the position may still move each way under the max position change.
+type PositionLimit struct {
+	Max      decimal.Decimal `json:"max"`      // in base
+	BuyRoom  decimal.Decimal `json:"buyRoom"`  // more it may buy
+	SellRoom decimal.Decimal `json:"sellRoom"` // more it may sell
 }
 
 // BalanceStatus is this book's view of the shared balances. Free is shared by every book on the
@@ -121,9 +136,19 @@ func (e *Engine) Status() Status {
 		s.Warnings = append(s.Warnings, "the modify threshold is wider than the spread, so an order can lag its target by more than the spread and sit on the wrong side of the mid; lower modifyThresholdBps or widen spreadBps")
 	}
 	p := e.pos
-	s.Position = PositionStatus{Qty: p.qty, AvgCost: p.avgCost, RealizedPnl: p.realized, VolumeBase: p.volBase, VolumeQuote: p.volQuote, Since: e.since}
+	s.Position = PositionStatus{Qty: p.qty, AvgCost: p.avgCost, RealizedPnl: p.realized, Fees: p.fees, VolumeBase: p.volBase, VolumeQuote: p.volQuote, Since: e.since}
 	if e.ref != nil && !p.qty.IsZero() {
 		s.Position.UnrealizedPnl = e.ref.Mid.Sub(p.avgCost).Mul(p.qty)
+	}
+	s.Position.Exit = e.exitLocked(orders)
+	if e.ref != nil && e.ref.Mid.IsPositive() {
+		if max := e.params.InBase(e.ref.Mid).MaxPosition; max.IsPositive() {
+			s.Position.Limit = &PositionLimit{
+				Max:      max,
+				BuyRoom:  decimal.Max(max.Sub(p.qty), decimal.Zero),
+				SellRoom: decimal.Max(max.Add(p.qty), decimal.Zero),
+			}
+		}
 	}
 	s.Balances = BalanceStatus{
 		FreeBase: e.ledger.Free(e.market.BaseAssetID), FreeQuote: e.ledger.Free(e.market.QuoteAssetID),
@@ -157,6 +182,44 @@ func (e *Engine) Status() Status {
 		}
 	}
 	return s
+}
+
+// exitLocked prices closing the position against the exchange's book, leaving out the book's own
+// resting orders on the side it would trade into. Without a usable depth book it uses the best bid
+// or ask alone.
+func (e *Engine) exitLocked(orders []Order) *Exit {
+	q := e.pos.qty
+	if q.IsZero() {
+		return nil
+	}
+	long := q.IsPositive()
+	into := Buy // a long sells into the bids
+	if !long {
+		into = Sell // a short buys from the asks
+	}
+	own := map[string]decimal.Decimal{}
+	for _, o := range orders {
+		if o.Side == into && o.Leaves.IsPositive() {
+			own[o.Price.String()] = own[o.Price.String()].Add(o.Leaves)
+		}
+	}
+	levels, source := []depthLevel(nil), "depth"
+	if e.depth.ok {
+		levels = e.depth.levels(into)
+	} else {
+		source = "top"
+		if long && e.bestBid != nil {
+			levels = []depthLevel{{price: *e.bestBid, qty: e.bestBidQty}}
+		} else if !long && e.bestAsk != nil {
+			levels = []depthLevel{{price: *e.bestAsk, qty: e.bestAskQty}}
+		}
+	}
+	x, ok := exitAgainst(levels, own, q.Abs(), e.pos.avgCost, long)
+	if !ok {
+		return nil
+	}
+	x.Source = source
+	return &x
 }
 
 // emptySideReasonLocked says which limit leaves a side with no level: the max position change or the
@@ -201,37 +264,63 @@ func (e *Engine) emptySideReasonLocked(side Side, mid decimal.Decimal) string {
 
 // Summary is one line per book for the book list.
 type Summary struct {
-	Market        Market           `json:"market"`
-	Enabled       bool             `json:"enabled"`
-	State         string           `json:"state"`
-	Reason        string           `json:"reason,omitempty"`
-	Reference     *decimal.Decimal `json:"reference"`
-	Position      decimal.Decimal  `json:"position"`
-	RealizedPnl   decimal.Decimal  `json:"realizedPnl"`
-	UnrealizedPnl decimal.Decimal  `json:"unrealizedPnl"`
-	Orders        int              `json:"orders"`
-	Fills         int              `json:"fills"`
-	HeldBase      decimal.Decimal  `json:"heldBase"`
-	HeldQuote     decimal.Decimal  `json:"heldQuote"`
-	BudgetBase    decimal.Decimal  `json:"budgetBase"`
-	BudgetQuote   decimal.Decimal  `json:"budgetQuote"`
-	MaxQuoteAlloc decimal.Decimal  `json:"maxQuoteAlloc"`
-	MaxBaseAlloc  decimal.Decimal  `json:"maxBaseAlloc"`
-	VolumeQuote   decimal.Decimal  `json:"volumeQuote"`
-	Stats         Stats            `json:"stats"`
-	BaseCapped    bool             `json:"-"`
+	Market    Market           `json:"market"`
+	Enabled   bool             `json:"enabled"`
+	State     string           `json:"state"`
+	Reason    string           `json:"reason,omitempty"`
+	Reference *decimal.Decimal `json:"reference"`
+	Position  decimal.Decimal  `json:"position"`
+	Fees      decimal.Decimal  `json:"fees"`
+	Exit      *Exit            `json:"exit"`
+	Limit     *PositionLimit   `json:"limit"`
+	// AvgCost and PositionSince explain the open PnL: (reference − avg cost) × position, counting
+	// the book's own fills since PositionSince.
+	AvgCost       decimal.Decimal `json:"avgCost"`
+	PositionSince time.Time       `json:"positionSince"`
+	RealizedPnl   decimal.Decimal `json:"realizedPnl"`
+	UnrealizedPnl decimal.Decimal `json:"unrealizedPnl"`
+	Orders        int             `json:"orders"`
+	Fills         int             `json:"fills"`
+	HeldBase      decimal.Decimal `json:"heldBase"`
+	HeldQuote     decimal.Decimal `json:"heldQuote"`
+	BudgetBase    decimal.Decimal `json:"budgetBase"`
+	BudgetQuote   decimal.Decimal `json:"budgetQuote"`
+	MaxQuoteAlloc decimal.Decimal `json:"maxQuoteAlloc"`
+	MaxBaseAlloc  decimal.Decimal `json:"maxBaseAlloc"`
+	VolumeQuote   decimal.Decimal `json:"volumeQuote"`
+	Stats         Stats           `json:"stats"`
+	BaseCapped    bool            `json:"-"`
+	// What the book is quoting against the exchange right now: the best bid and ask (EBBO), the
+	// skewed mid its ladder centres on, the skew and its cap, its own resting quotes (takes left
+	// out) and how close each side is to a take.
+	BestBid    *decimal.Decimal `json:"bestBid"`
+	BestAsk    *decimal.Decimal `json:"bestAsk"`
+	Mid        *decimal.Decimal `json:"mid"`
+	SkewBps    float64          `json:"skewBps"`
+	SkewMaxBps float64          `json:"skewMaxBps"`
+	Quotes     []OrderStatus    `json:"quotes"`
+	Taking     *TakeView        `json:"taking"`
 }
 
 func (e *Engine) Summary() Summary {
 	s := e.Status()
 	out := Summary{
 		Market: s.Market, Enabled: s.Enabled, State: s.State, Reason: s.Reason,
-		Position: s.Position.Qty, RealizedPnl: s.Position.RealizedPnl, UnrealizedPnl: s.Position.UnrealizedPnl,
+		Position: s.Position.Qty, AvgCost: s.Position.AvgCost, PositionSince: s.Position.Since,
+		Fees: s.Position.Fees, Exit: s.Position.Exit, Limit: s.Position.Limit,
+		RealizedPnl: s.Position.RealizedPnl, UnrealizedPnl: s.Position.UnrealizedPnl,
 		Orders: len(s.Orders), Fills: s.Stats.Fills, HeldBase: s.Balances.HeldBase, HeldQuote: s.Balances.HeldQuote,
 		BudgetBase: s.Balances.BudgetBase, BudgetQuote: s.Balances.BudgetQuote,
 		MaxQuoteAlloc: s.Params.MaxQuoteAlloc, MaxBaseAlloc: s.Params.MaxBaseAlloc,
 		BaseCapped:  s.Params.MaxBaseAlloc.IsPositive(),
 		VolumeQuote: s.Position.VolumeQuote, Stats: s.Stats,
+		BestBid: s.BestBid, BestAsk: s.BestAsk, Mid: s.Mid, SkewBps: s.SkewBps, SkewMaxBps: s.Params.SkewBps,
+		Quotes: []OrderStatus{}, Taking: s.Taking,
+	}
+	for _, o := range s.Orders {
+		if !o.Take {
+			out.Quotes = append(out.Quotes, o)
+		}
 	}
 	if s.Reference != nil {
 		m := s.Reference.Mid

@@ -2,6 +2,7 @@ import { RotateCcw } from "lucide-react";
 import { useState } from "react";
 import type { QuoterParams } from "../../../shared/api.ts";
 import { useQuoterSettings, useUpdateQuoterSettings } from "../api.ts";
+import { Help } from "./help.tsx";
 import { validate } from "./Quoter.tsx";
 import { Button, cx, inputClass, Panel } from "./ui.tsx";
 
@@ -76,10 +77,12 @@ export function QuoterSettings() {
               </label>
             );
           })}
-          <p className="max-w-md self-center text-[11px] text-faint">
-            Across every book. Changes apply at once and are saved in the quoter&apos;s books file, where they win over its .env on the next start. 0 means no
-            limit of the quoter&apos;s own.
-          </p>
+          <Help>
+            <p className="max-w-md self-center text-[11px] text-faint">
+              Across every book. Changes apply at once and are saved in the quoter&apos;s books file, where they win over its .env on the next start. 0 means no
+              limit of the quoter&apos;s own.
+            </p>
+          </Help>
         </div>
       )}
     </Panel>

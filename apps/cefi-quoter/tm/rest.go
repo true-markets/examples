@@ -351,6 +351,25 @@ func (c *REST) RecentOrders(ctx context.Context) ([]RestOrder, error) {
 	return pages[RestOrder](ctx, c, "/orders", nil, 20)
 }
 
+// TradeFill is one of the account's fills from GET /orders/trade: one match on one order, with
+// the fee the exchange charged for it.
+type TradeFill struct {
+	OrderID   Str    `json:"order_id"`
+	MatchID   Str    `json:"match_id"`
+	Side      string `json:"side"`
+	Price     string `json:"trade_price"`
+	Qty       string `json:"trade_qty"`
+	FeeBps    string `json:"trade_fee_bps"`
+	Liquidity string `json:"liq_flag"` // MAKER, TAKER or SETTER
+	Timestamp string `json:"timestamp"`
+}
+
+// Trades is the account's fills, newest first, up to max pages of 100.
+func (c *REST) Trades(ctx context.Context, max int) ([]TradeFill, error) {
+	q := url.Values{"timestamp": {strconv.FormatInt(time.Now().UnixNano(), 10)}}
+	return pages[TradeFill](ctx, c, "/orders/trade", q, max)
+}
+
 // NewOrder is the body of POST /orders.
 type NewOrder struct {
 	ClientID     string

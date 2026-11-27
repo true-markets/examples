@@ -4,6 +4,7 @@ import type { QuoterBookSummary, QuoterDeskStatus, QuoterParams, QuoterParamSpec
 import { useAllQuoterParams, useBulkUpdateQuoterParams } from "../api.ts";
 import { applyOp, opAllowed, type BulkOp } from "../bulk-params.ts";
 import { quoteUnit } from "../format.ts";
+import { useShowHelp } from "./help.tsx";
 import { validate } from "./Quoter.tsx";
 import { Button, cx, Empty, Modal, Panel } from "./ui.tsx";
 
@@ -38,6 +39,7 @@ function unitFor(spec: QuoterParamSpec, b: QuoterBookSummary, params: QuoterPara
 }
 
 export function BulkParams({ d }: { d: QuoterDeskStatus }) {
+  const help = useShowHelp();
   const books = d.books;
   const results = useAllQuoterParams(
     books.map((b) => b.market.symbol),
@@ -257,17 +259,20 @@ export function BulkParams({ d }: { d: QuoterDeskStatus }) {
             </tbody>
           </table>
         </div>
-        <div className="flex shrink-0 items-center gap-2 border-t border-line px-3 py-1.5 text-[11px] text-muted">
-          {changes.length ? (
-            <span>
-              <span className="text-accent">{changes.length}</span> change{changes.length === 1 ? "" : "s"} across {changedBooks.length} book
-              {changedBooks.length === 1 ? "" : "s"}
-              {invalid.length > 0 && <span className="text-sell"> · {invalid.length} to fix</span>}
-            </span>
-          ) : (
-            <span>Edit a cell, or use the top row on the ticked books: = sets the value, + adds to each book's own, × scales it.</span>
-          )}
-        </div>
+        {/* With nothing changed it's only a hint, which goes with the Help switch. */}
+        {(changes.length > 0 || help) && (
+          <div className="flex shrink-0 items-center gap-2 border-t border-line px-3 py-1.5 text-[11px] text-muted">
+            {changes.length ? (
+              <span>
+                <span className="text-accent">{changes.length}</span> change{changes.length === 1 ? "" : "s"} across {changedBooks.length} book
+                {changedBooks.length === 1 ? "" : "s"}
+                {invalid.length > 0 && <span className="text-sell"> · {invalid.length} to fix</span>}
+              </span>
+            ) : (
+              <span>Edit a cell, or use the top row on the ticked books: = sets the value, + adds to each book's own, × scales it.</span>
+            )}
+          </div>
+        )}
       </div>
       {confirm && (
         <Modal

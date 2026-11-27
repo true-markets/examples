@@ -41,6 +41,9 @@ type Config struct {
 	// Paper mode's starting balances, by asset. Every asset other than USDC is listed as a
 	// book against USDC.
 	PaperBalances map[string]decimal.Decimal
+	// PaperMakerFeeBps and PaperTakerFeeBps are what the paper exchange charges on each fill.
+	PaperMakerFeeBps decimal.Decimal
+	PaperTakerFeeBps decimal.Decimal
 }
 
 type FIXConfig struct {
@@ -162,6 +165,17 @@ func loadConfig() (Config, error) {
 		errs = append(errs, "PAPER_BALANCES needs a USDC balance: every paper book is priced in USDC")
 	}
 	c.PaperBalances = pb
+	for _, f := range []struct {
+		key, def string
+		to       *decimal.Decimal
+	}{{"PAPER_MAKER_FEE_BPS", "0", &c.PaperMakerFeeBps}, {"PAPER_TAKER_FEE_BPS", "0", &c.PaperTakerFeeBps}} {
+		v, err := decimal.NewFromString(get(f.key, f.def))
+		if err != nil || v.IsNegative() {
+			errs = append(errs, f.key+" must be a number of bps, 0 or more")
+			continue
+		}
+		*f.to = v
+	}
 	// One state file per environment, so switching TM_ENV (or paper and live) never mixes them.
 	stateEnv := c.Environment
 	if c.Mode == "paper" {

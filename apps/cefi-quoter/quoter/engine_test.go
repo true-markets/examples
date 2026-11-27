@@ -25,6 +25,14 @@ type fakeExchange struct {
 	log      []string
 	// ext is other people's best bid and ask (price, qty), which a take fills against.
 	extBid, extBidQty, extAsk, extAskQty decimal.Decimal
+	// tradeFills is what GET /orders/trade lists: the account's fills with their fees.
+	tradeFills []tm.TradeFill
+}
+
+func (f *fakeExchange) Trades(context.Context, int) ([]tm.TradeFill, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]tm.TradeFill(nil), f.tradeFills...), nil
 }
 
 type fakeOrder struct {
