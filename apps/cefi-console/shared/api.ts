@@ -551,6 +551,16 @@ export interface QuoterBookSummary {
   maxBaseAlloc: string;
   volumeQuote: string;
   stats: QuoterStats;
+  // What the book is quoting against the exchange right now; older quoters don't send these. The
+  // EBBO, the skewed mid the ladder centres on, the skew (+ shades the mid down while long) and its
+  // cap, the book's own resting quotes (takes left out), and how close each side is to a take.
+  bestBid?: string | null;
+  bestAsk?: string | null;
+  mid?: string | null;
+  skewBps?: number;
+  skewMaxBps?: number;
+  quotes?: QuoterOrder[];
+  taking?: QuoterTakeView | null;
 }
 
 // One asset in the ledger every book shares: free = spendable - foreign holds - our holds.

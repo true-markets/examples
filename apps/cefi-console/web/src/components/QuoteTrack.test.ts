@@ -47,4 +47,13 @@ describe("quote track layout", () => {
     const t = layoutTrack(90, 110, [])!;
     expect(t.askAt - t.bidAt).toBeCloseTo(22);
   });
+
+  it("places the mid inside the spread by price, and outside it on the order scale", () => {
+    // Mid 100, spread 20 bps: touch marks at 47 and 53.
+    expect(layoutTrack(99.9, 100.1, [], 100)!.midAt).toBeCloseTo(50);
+    expect(layoutTrack(99.9, 100.1, [], 99.95)!.midAt).toBeCloseTo(48.5);
+    // 10 bps under the bid: 10/70 of the way from the bid mark to the end.
+    expect(layoutTrack(99.9, 100.1, [], 99.8)!.midAt).toBeCloseTo(47 - (10 / TRACK_BPS) * 47, 1);
+    expect(layoutTrack(99.9, 100.1, [])!.midAt).toBeUndefined();
+  });
 });

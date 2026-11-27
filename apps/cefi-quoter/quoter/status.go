@@ -290,6 +290,16 @@ type Summary struct {
 	VolumeQuote   decimal.Decimal `json:"volumeQuote"`
 	Stats         Stats           `json:"stats"`
 	BaseCapped    bool            `json:"-"`
+	// What the book is quoting against the exchange right now: the best bid and ask (EBBO), the
+	// skewed mid its ladder centres on, the skew and its cap, its own resting quotes (takes left
+	// out) and how close each side is to a take.
+	BestBid    *decimal.Decimal `json:"bestBid"`
+	BestAsk    *decimal.Decimal `json:"bestAsk"`
+	Mid        *decimal.Decimal `json:"mid"`
+	SkewBps    float64          `json:"skewBps"`
+	SkewMaxBps float64          `json:"skewMaxBps"`
+	Quotes     []OrderStatus    `json:"quotes"`
+	Taking     *TakeView        `json:"taking"`
 }
 
 func (e *Engine) Summary() Summary {
@@ -304,6 +314,13 @@ func (e *Engine) Summary() Summary {
 		MaxQuoteAlloc: s.Params.MaxQuoteAlloc, MaxBaseAlloc: s.Params.MaxBaseAlloc,
 		BaseCapped:  s.Params.MaxBaseAlloc.IsPositive(),
 		VolumeQuote: s.Position.VolumeQuote, Stats: s.Stats,
+		BestBid: s.BestBid, BestAsk: s.BestAsk, Mid: s.Mid, SkewBps: s.SkewBps, SkewMaxBps: s.Params.SkewBps,
+		Quotes: []OrderStatus{}, Taking: s.Taking,
+	}
+	for _, o := range s.Orders {
+		if !o.Take {
+			out.Quotes = append(out.Quotes, o)
+		}
 	}
 	if s.Reference != nil {
 		m := s.Reference.Mid

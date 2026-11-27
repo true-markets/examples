@@ -11,6 +11,7 @@ import {
   List,
   Play,
   Plus,
+  Radar,
   Receipt,
   RotateCcw,
   Scale,
@@ -24,6 +25,7 @@ import { Panel as Pane } from "react-resizable-panels";
 import { Divider, pane, Split } from "./Layout.tsx";
 import { Help, ShowHelp } from "./help.tsx";
 import { OpenPnlView } from "./OpenPnl.tsx";
+import { QuotingView } from "./Quoting.tsx";
 import { InventoryBar } from "./InventoryBar.tsx";
 import { unwind } from "../open-pnl.ts";
 import { DrawerSetting, PhoneScreen, usePhone, usePhonePane } from "./Phone.tsx";
@@ -186,6 +188,7 @@ export function QuoterScreen() {
               { key: "balances", label: "Balances", icon: Wallet, group: desk_, node: <SharedBalancesPanel d={desk} onOpen={select} /> },
               { key: "trades", label: "Trades", icon: Receipt, group: desk_, note: desk.trades.trades || undefined, node: <TradesView onOpen={select} /> },
               { key: "open-pnl", label: "Open PnL", icon: Scale, group: desk_, node: <OpenPnlView d={desk} onOpen={select} /> },
+              { key: "quoting", label: "Quoting", icon: Radar, group: desk_, node: <QuotingView d={desk} onOpen={select} /> },
               {
                 key: "all-params",
                 label: "All-books parameters",
@@ -257,7 +260,19 @@ export function QuoterScreen() {
                   )}
                   {shownOpen === "pnl" && (
                     <div className="min-h-0 flex-1">
-                      <OpenPnlView d={desk} onOpen={select} />
+                      <Split id="quoter-monitor" orientation="vertical">
+                        <Pane id="quoter-monitor-pnl" defaultSize="50" minSize={120}>
+                          <div className={pane}>
+                            <OpenPnlView d={desk} onOpen={select} />
+                          </div>
+                        </Pane>
+                        <Divider vertical />
+                        <Pane id="quoter-monitor-quoting" defaultSize="50" minSize={120}>
+                          <div className={pane}>
+                            <QuotingView d={desk} onOpen={select} />
+                          </div>
+                        </Pane>
+                      </Split>
                     </div>
                   )}
                   {shownOpen === "params" && (
@@ -927,7 +942,7 @@ function BookCards({ s, paper }: { s: QuoterStatus; paper: boolean }) {
 }
 
 // The quoter screen's panes on a phone.
-const QUOTER_PANES = ["overview", "books", "balances", "trades", "open-pnl", "all-params", "cards", "ladder", "params", "events"] as const;
+const QUOTER_PANES = ["overview", "books", "balances", "trades", "open-pnl", "quoting", "all-params", "cards", "ladder", "params", "events"] as const;
 type QuoterPane = (typeof QUOTER_PANES)[number];
 type BookPart = "cards" | "ladder" | "params" | "events";
 
@@ -1901,7 +1916,7 @@ function OpenButton({
   );
 }
 
-// Results across every book; opens the open PnL, book by book.
+// Results across every book; opens the monitor: the open PnL and the quoting, book by book.
 function AllBooksBar({ d, open, onToggle, onUnits }: { d: QuoterDeskStatus; open: boolean; onToggle: (open: boolean) => void; onUnits: (u: Units) => void }) {
   const units = useUnits();
   if (!d.books.length) return null;
@@ -1915,9 +1930,9 @@ function AllBooksBar({ d, open, onToggle, onUnits }: { d: QuoterDeskStatus; open
           <OpenButton
             open={open}
             onToggle={onToggle}
-            icon={<Scale size={12} />}
-            label="Open PnL"
-            title={open ? "Close the open PnL breakdown" : "What counts toward the open PnL, book by book, and what doesn't"}
+            icon={<Radar size={12} />}
+            label="Monitor"
+            title={open ? "Close the monitor" : "Every book at once: its open PnL, and what it's quoting against the exchange"}
           />
         </>
       }

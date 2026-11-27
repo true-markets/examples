@@ -32,7 +32,13 @@ export interface TrackLayout {
   spread: number;
   spreadBps: number;
   markers: Marker[];
+  // Where the mid the quotes centre on sits, when given: between the touch marks by price inside
+  // the spread, and on the same bps scale as the orders outside it.
+  midAt?: number;
 }
+
+// What the track needs of an order: the console's own orders and the quoter's quotes both fit.
+export type TrackOrder = Pick<OrderRow, "orderId" | "side" | "price" | "leavesQty" | "status">;
 
 // The gap between the touch marks grows with the spread, within limits, so a wide book visibly
 // opens up in the middle without squeezing either side away.
@@ -40,7 +46,7 @@ const GAP_PER_BPS = 0.3;
 const MIN_GAP = 4;
 const MAX_GAP = 22;
 
-export function layoutTrack(bid: number, ask: number, orders: OrderRow[]): TrackLayout | undefined {
+export function layoutTrack(bid: number, ask: number, orders: TrackOrder[], quoteMid?: number): TrackLayout | undefined {
   if (!(bid > 0 && ask > 0 && ask >= bid)) return undefined;
   const mid = (bid + ask) / 2;
   const spread = ask - bid;
@@ -73,7 +79,13 @@ export function layoutTrack(bid: number, ask: number, orders: OrderRow[]): Track
   }
   // The touch draws last, so it's on top where markers overlap.
   markers.sort((a, b) => Number(a.atTouch) - Number(b.atTouch) || b.behindBps - a.behindBps);
-  return { bidAt, askAt, spread, spreadBps, markers };
+  let midAt: number | undefined;
+  if (quoteMid !== undefined && quoteMid > 0) {
+    if (quoteMid < bid) midAt = bidAt - Math.min(((bid - quoteMid) / mid) * 10_000, TRACK_BPS) * perBps;
+    else if (quoteMid > ask) midAt = askAt + Math.min(((quoteMid - ask) / mid) * 10_000, TRACK_BPS) * perBps;
+    else midAt = spread > 0 ? bidAt + ((quoteMid - bid) / spread) * (askAt - bidAt) : 50;
+  }
+  return { bidAt, askAt, spread, spreadBps, markers, midAt };
 }
 
 export function QuoteTrack({ bid, ask, orders }: { bid?: string; ask?: string; orders: OrderRow[] }) {
@@ -87,29 +99,45 @@ export function QuoteTrack({ bid, ask, orders }: { bid?: string; ask?: string; o
         <span className="text-faint">{t ? `$${t.spread.toFixed(decimals)}` : "—"}</span>
         <span className="truncate text-sell">{price(ask)}</span>
       </div>
-      <div className="relative mt-0.5 h-4" aria-hidden>
-        {t && (
-          <>
-            <div className="absolute top-[6px] left-0 h-[3px] rounded-full bg-buy/30" style={{ width: `${t.bidAt}%` }} />
-            <div className="absolute top-[6px] right-0 h-[3px] rounded-full bg-sell/30" style={{ left: `${t.askAt}%` }} />
-            <div className="absolute top-0 h-4 w-0.5 -translate-x-1/2 bg-buy" style={{ left: `${t.bidAt}%` }} />
-            <div className="absolute top-0 h-4 w-0.5 -translate-x-1/2 bg-sell" style={{ left: `${t.askAt}%` }} />
-            {t.markers.map((m) => (
-              <span
-                key={m.orderId}
-                title={m.title}
-                className={cx(
-                  "absolute top-[3px] h-[9px] w-2 -translate-x-1/2 rounded-[2px] border bg-accent",
-                  m.atTouch ? "border-ink" : "border-accent/60",
-                  m.clipped && (m.side === "BUY" ? "rounded-l-full" : "rounded-r-full"),
-                )}
-                style={{ left: `clamp(4px, ${m.pos}%, calc(100% - 4px))` }}
-              />
-            ))}
-          </>
-        )}
-      </div>
+      <TrackBar t={t} className="mt-0.5" />
       <div className="num text-center text-[10px] text-faint">{t ? `${t.spreadBps.toFixed(1)} bps` : " "}</div>
+    </div>
+  );
+}
+
+// The track on its own: green and red halves, the touch marks, your orders, and the mid when the
+// layout has one.
+export function TrackBar({ t, midTitle, className }: { t: TrackLayout | undefined; midTitle?: string; className?: string }) {
+  return (
+    <div className={cx("relative h-4", className)} aria-hidden>
+      {t && (
+        <>
+          <div className="absolute top-[6px] left-0 h-[3px] rounded-full bg-buy/30" style={{ width: `${t.bidAt}%` }} />
+          <div className="absolute top-[6px] right-0 h-[3px] rounded-full bg-sell/30" style={{ left: `${t.askAt}%` }} />
+          <div className="absolute top-0 h-4 w-0.5 -translate-x-1/2 bg-buy" style={{ left: `${t.bidAt}%` }} />
+          <div className="absolute top-0 h-4 w-0.5 -translate-x-1/2 bg-sell" style={{ left: `${t.askAt}%` }} />
+          {t.markers.map((m) => (
+            <span
+              key={m.orderId}
+              title={m.title}
+              className={cx(
+                "absolute top-[3px] h-[9px] w-2 -translate-x-1/2 rounded-[2px] border bg-accent",
+                m.atTouch ? "border-ink" : "border-accent/60",
+                m.clipped && (m.side === "BUY" ? "rounded-l-full" : "rounded-r-full"),
+              )}
+              style={{ left: `clamp(4px, ${m.pos}%, calc(100% - 4px))` }}
+            />
+          ))}
+          {t.midAt !== undefined && (
+            // A small caret under the track, so it doesn't hide the orders.
+            <span
+              title={midTitle}
+              className="absolute -bottom-1 h-0 w-0 -translate-x-1/2 border-x-[4px] border-b-[5px] border-x-transparent border-b-ink"
+              style={{ left: `${t.midAt}%` }}
+            />
+          )}
+        </>
+      )}
     </div>
   );
 }
